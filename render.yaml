@@ -11,7 +11,7 @@ services:
   - type: web
     name: easy
     runtime: docker
-    plan: free                  # upgrade to 'starter' ($7/mo) for zero cold-start
+    plan: starter               # $7/mo — required for persistent disk + always-on
     dockerfilePath: ./Dockerfile
     autoDeploy: true
     healthCheckPath: /api/health
