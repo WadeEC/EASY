@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.gitignore
+README.md
+*.md
+league.db
+league.db-*
+_db-backups
+.ai-pending-changes
+.env*
+.DS_Store

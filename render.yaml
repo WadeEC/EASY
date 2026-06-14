@@ -1,0 +1,47 @@
+# Render.com Blueprint — one click deploy.
+# Push this repo to GitHub, then go to https://dashboard.render.com/blueprints
+# and point it at the repo. Render reads this file and provisions everything.
+#
+# Auth: per-user accounts + sessions are now built in. On first visit to the
+# deployed URL you'll see the login page; the first sign-up creates the admin
+# account, after that admins create more users from /api/auth/users. No shared
+# password env var anymore.
+
+services:
+  - type: web
+    name: easy
+    runtime: docker
+    plan: free                  # upgrade to 'starter' ($7/mo) for zero cold-start
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production       # also flips session cookies to Secure
+      - key: LEAGUE_DB
+        value: /data/league.db
+      # ---- AI provider (pick one) ----
+      # Option A: Claude (paid, best quality). Set ANTHROPIC_API_KEY in the
+      # Render dashboard, leave LLM_PRIMARY as "claude".
+      - key: LLM_PRIMARY
+        value: claude
+      - key: ANTHROPIC_API_KEY
+        sync: false             # set in the Render dashboard (secret)
+      # Option B: Groq (free, fast). Switch LLM_PRIMARY to "groq" and set
+      # GROQ_API_KEY below. Leave both keys present — the fallback chain
+      # auto-uses whichever has a key.
+      - key: GROQ_API_KEY
+        sync: false             # optional: set if using Groq
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GROQ_FAST_MODEL
+        value: llama-3.1-8b-instant
+      # ---- Rate limits (per-IP guard) ----
+      - key: RATE_PER_MIN
+        value: "60"
+      - key: RATE_PER_HOUR
+        value: "600"
+    disk:
+      name: league-data
+      mountPath: /data
+      sizeGB: 1                 # plenty for thousands of records

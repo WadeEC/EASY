@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "districts": {
+    "Limerick": {
+      "leagues": ["Saturday Limerick"],
+      "markers": [
+        { "value": "Limerick", "tier": 1 },
+        { "value": "LMK", "tier": 1 }
+      ]
+    },
+    "Upper Merion": {
+      "leagues": ["Sunday Upper Merion"],
+      "markers": [
+        { "value": "Upper Merion", "tier": 1 },
+        { "value": "UM", "tier": 1 }
+      ]
+    },
+    "Phoenixville": {
+      "leagues": [],
+      "markers": [
+        { "value": "Phoenixville", "tier": 1 },
+        { "value": "PHX", "tier": 1 }
+      ]
+    },
+    "Payne Township": {
+      "leagues": [],
+      "markers": [
+        { "value": "Payne", "tier": 1 },
+        { "value": "Payne Township", "tier": 1 }
+      ]
+    },
+    "Plymouth Township": {
+      "leagues": [],
+      "markers": [
+        { "value": "Plymouth", "tier": 1 },
+        { "value": "Plymouth Township", "tier": 1 }
+      ]
+    }
+  }
+}
