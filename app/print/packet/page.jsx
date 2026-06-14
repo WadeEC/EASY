@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api.js";
 
@@ -25,7 +25,18 @@ function fmtFullDate(iso) {
   return d.toLocaleDateString([], { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 }
 
+// Next.js 14 requires useSearchParams() to live inside a <Suspense> at static
+// build time. We export a wrapper that satisfies that, with the real page
+// component as its child.
 export default function PacketPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 40 }}>Loading…</div>}>
+      <PacketPageInner />
+    </Suspense>
+  );
+}
+
+function PacketPageInner() {
   const sp = useSearchParams();
   const date = sp.get("date") || "";
   const field = sp.get("field") || "";

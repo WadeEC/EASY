@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api.js";
 
@@ -39,7 +39,17 @@ function divisionOf(g) {
 }
 const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
 
+// Next.js 14 requires useSearchParams() to live inside a <Suspense> at static
+// build time. Wrap the real page in one.
 export default function MasterPrintPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 40 }}>Loading…</div>}>
+      <MasterPrintPageInner />
+    </Suspense>
+  );
+}
+
+function MasterPrintPageInner() {
   const sp = useSearchParams();
   const league = sp.get("league") || "";
   const division = sp.get("division") || "";
