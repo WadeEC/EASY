@@ -6,12 +6,13 @@ import { useEffect, useState } from "react";
 // Successful auth sets the session cookie server-side and we redirect back to
 // wherever the user was trying to reach (?next=/something).
 export default function LoginPage() {
-  const [mode, setMode] = useState("signin"); // "signin" | "create"
+  const [mode, setMode] = useState("signin"); // "signin" | "create" | "forgot"
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");   // green confirmation under the form
   const [isFirstRun, setIsFirstRun] = useState(false);
 
   // Probe state on mount: are we already signed in? Is this a fresh install
@@ -76,9 +77,27 @@ export default function LoginPage() {
     } finally { setBusy(false); }
   }
 
+  // "I forgot my password" — anonymous endpoint. Always responds ok; an admin
+  // sees the reset request on the Users page and sets a new password.
+  async function doForgot() {
+    if (!username.trim()) { setErr("Enter your username so the admin knows whose password to reset."); return; }
+    setBusy(true); setErr(""); setInfo("");
+    try {
+      const r = await fetch("/api/auth/forgot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d?.error) { setErr(d.error); return; }
+      setInfo("Reset requested. Contact your admin to set a new temporary password.");
+    } finally { setBusy(false); }
+  }
+
   function submit(e) {
     e?.preventDefault?.();
     if (busy) return;
+    if (mode === "forgot") { doForgot(); return; }
     if (!username.trim() || !password) { setErr("Username and password are required."); return; }
     if (mode === "signin") doSignIn(); else doCreate();
   }
@@ -104,7 +123,9 @@ export default function LoginPage() {
             <span style={{ color: "var(--brand, #c8102e)" }}>Flag</span> Football
           </div>
           <div className="muted" style={{ marginTop: 2 }}>
-            {mode === "signin" ? "Sign in to continue" : isFirstRun ? "Create the first admin account" : "Create a new account"}
+            {mode === "signin" ? "Sign in to continue"
+              : mode === "forgot" ? "Forgot your password?"
+              : isFirstRun ? "Create the first admin account" : "Create a new account"}
           </div>
         </div>
 
@@ -138,31 +159,60 @@ export default function LoginPage() {
             placeholder="email or handle"
           />
 
-          <label className="fld">Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === "create" ? "new-password" : "current-password"}
-            placeholder={mode === "create" ? "At least 6 characters" : ""}
-          />
+          {mode !== "forgot" && (
+            <>
+              <label className="fld">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={mode === "create" ? "new-password" : "current-password"}
+                placeholder={mode === "create" ? "At least 6 characters" : ""}
+              />
+            </>
+          )}
+
+          {mode === "forgot" && (
+            <div className="muted small" style={{ marginTop: 6 }}>
+              Enter your username. The admin will see your request and set you a new temporary password — sign in with that, then you'll be asked to pick a new one.
+            </div>
+          )}
 
           {err && <div className="note warn" style={{ marginTop: 12 }}>{err}</div>}
+          {info && <div className="note good" style={{ marginTop: 12 }}>{info}</div>}
 
           <button
             type="submit"
             className="btn primary"
             style={{ width: "100%", marginTop: 14, padding: 12, fontSize: 16 }}
-            disabled={busy || !username || !password || (mode === "create" && !displayName.trim())}
+            disabled={busy
+              || !username
+              || (mode !== "forgot" && !password)
+              || (mode === "create" && !displayName.trim())}
           >
-            {busy ? "Working…" : mode === "signin" ? "Sign in" : "Create account"}
+            {busy ? "Working…"
+              : mode === "signin" ? "Sign in"
+              : mode === "forgot" ? "Request reset"
+              : "Create account"}
           </button>
+
+          {mode === "signin" && (
+            <div style={{ marginTop: 8, textAlign: "center" }}>
+              <a
+                onClick={() => { setMode("forgot"); setErr(""); setInfo(""); }}
+                className="muted small"
+                style={{ cursor: "pointer", textDecoration: "underline" }}
+              >Forgot password?</a>
+            </div>
+          )}
 
           <div className="muted small" style={{ marginTop: 12, textAlign: "center" }}>
             {mode === "signin" ? (
-              <>Don't have an account? <a onClick={() => { setMode("create"); setErr(""); }} style={{ cursor: "pointer", textDecoration: "underline" }}>Create one</a></>
+              <>Don't have an account? <a onClick={() => { setMode("create"); setErr(""); setInfo(""); }} style={{ cursor: "pointer", textDecoration: "underline" }}>Create one</a></>
+            ) : mode === "forgot" ? (
+              <><a onClick={() => { setMode("signin"); setErr(""); setInfo(""); }} style={{ cursor: "pointer", textDecoration: "underline" }}>Back to sign in</a></>
             ) : (
-              <>Already have an account? <a onClick={() => { setMode("signin"); setErr(""); }} style={{ cursor: "pointer", textDecoration: "underline" }}>Sign in</a></>
+              <>Already have an account? <a onClick={() => { setMode("signin"); setErr(""); setInfo(""); }} style={{ cursor: "pointer", textDecoration: "underline" }}>Sign in</a></>
             )}
           </div>
 

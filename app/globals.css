@@ -262,8 +262,12 @@ pre.diff .add{color:#9be58b}.pre .del{color:#ff9a9a}
 .mode-pill:hover{color:#fff}
 .mode-pill.active{background:#fff;color:var(--navy)}
 
-/* Referee mode — black & white skin (overrides the red/white/blue palette) */
-.app.ref-mode{
+/* Referee mode — black & white skin (overrides the red/white/blue palette).
+   `.app.ref-mode` targets the main shell; the bare `.ref-mode` selector lets
+   stand-alone screens (like the full-screen referee kiosk in RefScanIn.jsx)
+   adopt the same palette without sitting inside the app shell. */
+.app.ref-mode,
+.ref-mode{
   --brand:#1f1f1f; --brand-d:#000; --brand-soft:#ededed;
   --navy:#0b0b0b; --navy-2:#262626;
   --accent:#333333; --accent-soft:#ededed;

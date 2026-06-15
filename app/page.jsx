@@ -23,10 +23,12 @@ import Advanced from "@/components/Advanced.jsx";
 import MasterSpreadsheet from "@/components/MasterSpreadsheet.jsx";
 import Standings from "@/components/Standings.jsx";
 import AssistantWidget from "@/components/AssistantWidget.jsx";
+import UsersPage from "@/components/UsersPage.jsx";
+import RefScanIn from "@/components/RefScanIn.jsx";
 // ToastHost is mounted in app/layout.jsx so every page (login, scanin, print, …)
 // gets confirmation toasts, not just the main shell.
 
-const PAGES = ["home", "people", "section", "teambuilder", "board", "schedule", "attendance", "scanin", "leagues", "advanced", "assigned", "coverage", "tournaments", "changelog", "timemachine", "raffle", "rankings", "master", "standings"];
+const PAGES = ["home", "people", "section", "teambuilder", "board", "schedule", "attendance", "scanin", "refscanin", "leagues", "advanced", "assigned", "coverage", "tournaments", "changelog", "timemachine", "raffle", "rankings", "master", "standings", "users"];
 const viewToParam = (v) => {
   if (v.page === "section" && v.type) return `section:${v.type}`;
   if (v.page === "people" && v.tab) return `people:${v.tab}`;
@@ -101,7 +103,84 @@ export default function Home() {
 
   // These render full-screen, with no sidebar or assistant.
   if (view.page === "scanin") return <ScanIn go={navigate} />;
+  if (view.page === "refscanin") return <RefScanIn />;
   if (view.page === "board") return <div className="fullpage"><Board go={navigate} /></div>;
+
+  // When an admin resets your password, the must_change_password flag forces
+  // a one-time change before any other page renders. The gate calls /api/auth/me
+  // itself so it's independent of the rest of the page load.
+  return <PasswordGate><MainShell {...{ navOpen, setNavOpen, appMode, view, navigate, sameView, openNav, setOpenNav, types, sectionLabel, contentKey, state, refresh, setAssistantSeed, assistantOpen, setAssistantOpen, assistantSeed, applied, switchMode, NavBtn, groupHdr }} /></PasswordGate>;
+}
+
+// Wrapper that probes /api/auth/me once and, if the user has a temporary
+// password, blocks the entire app behind a "set a new password" form. Once
+// they update it, the wrapper reloads the page so the rest of the app boots
+// with the fresh session.
+function PasswordGate({ children }) {
+  const [me, setMe] = useState(undefined);
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/me", { cache: "no-store" });
+        const d = await r.json().catch(() => ({}));
+        if (!cancel) setMe(d?.user || null);
+      } catch { if (!cancel) setMe(null); }
+    })();
+    return () => { cancel = true; };
+  }, []);
+  if (me === undefined) return null;
+  if (me && me.must_change_password) return <ForcedPasswordChange username={me.username} />;
+  return children;
+}
+
+function ForcedPasswordChange({ username }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  async function submit(e) {
+    e?.preventDefault?.();
+    setErr("");
+    if (next !== confirm) { setErr("New password and confirmation don't match."); return; }
+    if (!next || next.length < 6) { setErr("New password must be at least 6 characters."); return; }
+    setBusy(true);
+    try {
+      const r = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: current, new_password: next }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.error) { setErr(d.error); return; }
+      // Session was wiped — bounce to login so they re-auth with the new password.
+      window.location.href = "/login";
+    } finally { setBusy(false); }
+  }
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "linear-gradient(180deg, #0b1535 0%, #1a2858 100%)" }}>
+      <form onSubmit={submit} style={{ background: "#fff", borderRadius: 16, width: 420, padding: "26px 30px", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }}>
+        <h2 style={{ marginTop: 0 }}>Set a new password</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Welcome, <b>{username}</b>. You signed in with a temporary password — pick a new one to continue.
+        </p>
+        <label className="fld">Temporary password</label>
+        <input type="password" autoFocus value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
+        <label className="fld">New password</label>
+        <input type="password" value={next} onChange={(e) => setNext(e.target.value)} placeholder="6+ characters" autoComplete="new-password" />
+        <label className="fld">Confirm new password</label>
+        <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
+        {err && <div className="note warn" style={{ marginTop: 12 }}>{err}</div>}
+        <button type="submit" className="btn primary" style={{ width: "100%", marginTop: 14, padding: 12, fontSize: 16 }} disabled={busy || !current || !next || !confirm}>
+          {busy ? "Updating…" : "Set new password"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function MainShell({ navOpen, setNavOpen, appMode, view, navigate, sameView, openNav, setOpenNav, types, sectionLabel, contentKey, state, refresh, setAssistantSeed, assistantOpen, setAssistantOpen, assistantSeed, applied, switchMode, NavBtn, groupHdr }) {
 
   return (
     <div className={"app" + (navOpen ? "" : " nav-collapsed") + (appMode === "ref" ? " ref-mode" : "")}>
@@ -132,6 +211,7 @@ export default function Home() {
             <NavBtn id={{ page: "schedule" }}>Field schedule</NavBtn>
             <NavBtn id={{ page: "assigned" }}>Assigned</NavBtn>
             <NavBtn id={{ page: "coverage" }}>Coverage</NavBtn>
+            <NavBtn id={{ page: "refscanin" }}>Kiosk</NavBtn>
             <NavBtn id={{ page: "section", type: "referee" }}>Referees</NavBtn>
           </>
         ) : (
@@ -168,6 +248,7 @@ export default function Home() {
               <>
                 <NavBtn id={{ page: "leagues" }}>Leagues &amp; Assignment</NavBtn>
                 <NavBtn id={{ page: "master" }}>Master Spreadsheet</NavBtn>
+                <NavBtn id={{ page: "users" }}>Users</NavBtn>
                 <NavBtn id={{ page: "changelog" }}>Change log</NavBtn>
                 <NavBtn id={{ page: "timemachine" }}>Time Machine</NavBtn>
                 <NavBtn id={{ page: "advanced" }}>Advanced</NavBtn>
@@ -208,6 +289,7 @@ export default function Home() {
         {view.page === "tournaments" && <TournamentsPage key={`trn-${contentKey}`} />}
         {view.page === "changelog" && <ChangeLog key={`log-${contentKey}`} />}
         {view.page === "timemachine" && <TimeMachine key={`tm-${contentKey}`} refresh={refresh} />}
+        {view.page === "users" && <UsersPage key={`users-${contentKey}`} />}
         {view.page === "raffle" && <RafflePage key={`raf-${contentKey}`} />}
         {view.page === "rankings" && <RankingsPage key={`rnk-${contentKey}`} go={navigate} />}
       </main>

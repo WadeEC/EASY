@@ -70,9 +70,9 @@ export default function RefHome({ go, onAsk }) {
           <div className="t">Referees</div>
           <div className="d">Add or edit the officials roster</div>
         </button>
-        <button className="bigtile" onClick={() => go({ page: "schedule" })}>
-          <div className="t">Check in</div>
-          <div className="d">Scan in to pull up your fields for the day</div>
+        <button className="bigtile" onClick={() => go({ page: "refscanin" })}>
+          <div className="t">Check in (Kiosk)</div>
+          <div className="d">Scan your key tag to clock in and see today's games</div>
         </button>
       </div>
 
