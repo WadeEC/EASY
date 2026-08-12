@@ -27,7 +27,11 @@ export default function TeamEditor({ go, onAsk }) {
     // Scope to the sidebar's season picker (untagged players show everywhere).
     let sn = "";
     try { sn = (typeof localStorage !== "undefined" && localStorage.getItem("ff_season")) || ""; } catch {}
-    const inScope = (x) => { if (!sn) return true; const s = parse(x.data).season; return !s || String(s) === sn; };
+    const inScope = (x) => {
+      if (!sn) return true;
+      const s = parse(x.data).season ? String(parse(x.data).season) : "";
+      return sn === "(no season)" ? !s : s === sn;
+    };
     setPlayers((r.records || []).filter(inScope).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.full_name || `#${x.id}`, team: d.team || "", league: d.league || "", division: d.division || "", data: d }; }));
     try { const s = await api.schema("player"); setFields(s.fields || []); } catch {}
     try { const c = await api.records("coach"); setCoaches((c.records || []).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.full_name || `#${x.id}`, role: d.role || "", team: d.team || "" }; })); } catch { setCoaches([]); }

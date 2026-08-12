@@ -345,6 +345,7 @@ function AccountChip() {
 // current (most recently made) season.
 function SeasonPicker({ reloadKey, onChanged }) {
   const [seasons, setSeasons] = useState([]);
+  const [untagged, setUntagged] = useState(0);
   const [sel, setSel] = useState("");
   useEffect(() => {
     let dead = false;
@@ -353,6 +354,7 @@ function SeasonPicker({ reloadKey, onChanged }) {
         const s = await api.seasonsList();
         if (dead || s.error) return;
         setSeasons(s.seasons || []);
+        setUntagged(Number(s.untagged) || 0);
         let cur = null;
         try { cur = localStorage.getItem("ff_season"); } catch {}
         if (cur == null) {
@@ -380,6 +382,7 @@ function SeasonPicker({ reloadKey, onChanged }) {
       >
         <option value="">All seasons</option>
         {seasons.map((s) => <option key={s} value={s}>{s}</option>)}
+        {untagged > 0 && <option value="(no season)">No season (legacy · {untagged})</option>}
       </select>
     </div>
   );

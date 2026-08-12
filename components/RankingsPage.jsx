@@ -23,7 +23,11 @@ export default function RankingsPage({ go }) {
     // Scope to the sidebar's season picker (untagged players show everywhere).
     let sn = "";
     try { sn = (typeof localStorage !== "undefined" && localStorage.getItem("ff_season")) || ""; } catch {}
-    const inScope = (x) => { if (!sn) return true; const s = parse(x.data).season; return !s || String(s) === sn; };
+    const inScope = (x) => {
+      if (!sn) return true;
+      const s = parse(x.data).season ? String(parse(x.data).season) : "";
+      return sn === "(no season)" ? !s : s === sn;
+    };
     setPlayers(r.records.filter(inScope).map((x) => {
       const d = parse(x.data);
       return { id: x.id, name: x.name || d.full_name || `#${x.id}`, rank: Number(d.end_season_rank) || 0, team: d.team || "", division: d.division || "", league: d.league || "", season: d.rank_season || "" };

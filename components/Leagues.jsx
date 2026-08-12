@@ -429,7 +429,7 @@ function RosterMoves({ locks, reloadLocks, setFlash }) {
   const seasonOpts = [...new Set(ctx.players.map((p) => p.season).filter(Boolean))].sort();
   const filtered = ctx.players.filter((p) =>
     (!sourceLeague || p.league === sourceLeague || p.second_league === sourceLeague) &&
-    (!sourceSeason || (sourceSeason === "(no season)" ? !p.season : (!p.season || p.season === sourceSeason))));
+    (!sourceSeason || (sourceSeason === "(no season)" ? !p.season : p.season === sourceSeason)));
   const divisionsForDest = (ctx.divisions || []).filter((d) => !d.league || d.league === destLeague);
   const toggle = (id) => {
     const next = new Set(selected);

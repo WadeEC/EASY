@@ -275,7 +275,8 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
     if (starsOnly && !dataOf(r).all_star) return false;
     if (seasonSel && type === "player") {
       const s = String(dataOf(r).season || "");
-      if (s && s !== seasonSel) return false; // untagged records show everywhere
+      if (seasonSel === "(no season)") { if (s) return false; } // legacy bucket
+      else if (s !== seasonSel) return false; // strict: untagged stay out of named seasons
     }
     return true;
   });
@@ -360,7 +361,13 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
     }
   }
   const toggle = [...leagueOpts];
-  for (const k of Object.keys(groups)) if (k !== "Unassigned" && !toggle.includes(k) && groups[k].length) toggle.push(k);
+  // When the season has a league list, ONLY those leagues get pills — a league
+  // that isn't in the season doesn't show for the season.
+  const seasonHasLeagueList = type === "player" && seasonSel && seasonSel !== "(no season)" &&
+    seasonLeagueMap && Array.isArray(seasonLeagueMap[seasonSel]) && seasonLeagueMap[seasonSel].length > 0;
+  if (!seasonHasLeagueList) {
+    for (const k of Object.keys(groups)) if (k !== "Unassigned" && !toggle.includes(k) && groups[k].length) toggle.push(k);
+  }
   if ((groups["Unassigned"] || []).length) toggle.push("Unassigned");
   const active = activeLg && groups[activeLg] ? activeLg : (toggle.find((lg) => (groups[lg] || []).length) || toggle[0]);
   const list = active ? (groups[active] || []) : [];

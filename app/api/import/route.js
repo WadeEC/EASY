@@ -30,7 +30,10 @@ export async function POST(req) {
   const otherSeasonIds = new Set();
   for (const r of getRecords(rtype)) {
     const d = parse(r.data);
-    if (season && rtype === "player" && d.season && String(d.season) !== String(season)) {
+    // STRICT: only same-season records count as duplicates. Untagged (legacy)
+    // records belong to the "(no season)" bucket, so a new season's import
+    // re-registers returning players instead of skipping them.
+    if (season && rtype === "player" && String(d.season || "") !== String(season)) {
       otherSeasonIds.add(r.id);
       continue;
     }
