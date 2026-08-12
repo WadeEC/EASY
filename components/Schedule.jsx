@@ -159,7 +159,7 @@ export default function Schedule({ go, onAsk, startRef }) {
       const counts = {}; // teamName -> { divisionName: hits }
       for (const x of (pr.records || [])) {
         let d = {}; try { d = JSON.parse(x.data || "{}"); } catch {}
-        const t = (d.team || "").trim(); const dv = (d.division || "").trim();
+        const t = String(d.team || "").trim(); const dv = String(d.division || "").trim();
         if (!t || !dv) continue;
         counts[t] = counts[t] || {}; counts[t][dv] = (counts[t][dv] || 0) + 1;
       }

@@ -8,7 +8,7 @@ const fmt = (v) => (v === null || v === undefined ? "" : typeof v === "boolean" 
 
 function groupByDivision(list) {
   const by = {};
-  for (const p of list) { const dv = (p.data.division || "").trim() || "No division"; (by[dv] = by[dv] || []).push(p); }
+  for (const p of list) { const dv = String(p.data.division || "").trim() || "No division"; (by[dv] = by[dv] || []).push(p); }
   return Object.entries(by).sort((a, b) =>
     a[0] === "No division" ? 1 : b[0] === "No division" ? -1 : a[0].localeCompare(b[0]));
 }

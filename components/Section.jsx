@@ -341,7 +341,7 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
 
   const byDivision = (arr) => {
     const by = {};
-    for (const r of arr) { const dv = (dataOf(r).division || "").trim() || "No division"; (by[dv] = by[dv] || []).push(r); }
+    for (const r of arr) { const dv = String(dataOf(r).division || "").trim() || "No division"; (by[dv] = by[dv] || []).push(r); }
     return Object.entries(by).sort((a, b) => (a[0] === "No division" ? 1 : b[0] === "No division" ? -1 : a[0].localeCompare(b[0])));
   };
   async function openMove(r) {
