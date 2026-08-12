@@ -205,6 +205,8 @@ function MainShell({ navOpen, setNavOpen, appMode, view, navigate, sameView, ope
           <button className={"mode-pill" + (appMode === "ref" ? " active" : "")} onClick={() => switchMode("ref")}>Referees</button>
         </div>
 
+        <SeasonPicker reloadKey={contentKey} onChanged={applied} />
+
         {appMode === "ref" ? (
           <>
             <NavBtn id={{ page: "home" }}>Home</NavBtn>
@@ -332,6 +334,53 @@ function AccountChip() {
         <button onClick={signOut} title="Sign out"
           style={{ background: "rgba(255,255,255,0.08)", color: "#cdd6ec", border: "1px solid rgba(255,255,255,0.16)", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer" }}>Sign out</button>
       </div>
+    </div>
+  );
+}
+
+
+// Global season picker — one control that scopes EVERY page. The choice is kept
+// in localStorage (ff_season) and sent to the server with every request as the
+// x-ff-season header; changing it remounts the current view. Defaults to the
+// current (most recently made) season.
+function SeasonPicker({ reloadKey, onChanged }) {
+  const [seasons, setSeasons] = useState([]);
+  const [sel, setSel] = useState("");
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        const s = await api.seasonsList();
+        if (dead || s.error) return;
+        setSeasons(s.seasons || []);
+        let cur = null;
+        try { cur = localStorage.getItem("ff_season"); } catch {}
+        if (cur == null) {
+          cur = s.active || "";
+          try { localStorage.setItem("ff_season", cur); } catch {}
+        }
+        setSel(cur || "");
+      } catch {}
+    })();
+    return () => { dead = true; };
+  }, [reloadKey]);
+  if (!seasons.length) return null;
+  return (
+    <div style={{ padding: "0 12px", marginBottom: 10 }}>
+      <select
+        value={sel}
+        onChange={(e) => {
+          const v = e.target.value;
+          setSel(v);
+          try { localStorage.setItem("ff_season", v); } catch {}
+          onChanged && onChanged();
+        }}
+        title="Season — scopes every page"
+        style={{ width: "100%" }}
+      >
+        <option value="">All seasons</option>
+        {seasons.map((s) => <option key={s} value={s}>{s}</option>)}
+      </select>
     </div>
   );
 }

@@ -16,14 +16,25 @@ export async function POST(req) {
   const fields = getFields(rtype);
   const mapping = b.mapping || {};
   const source = b.source || null;
+  const season = b.season || null; // which season this upload belongs to
   const sourceFile = b.sourceFile || b.filename || null;
   const rows = b.rows || [];
   const allowAmbiguous = new Set((b.allowAmbiguous || []).map((n) => Number(n)));
 
-  // Index existing strict identity keys → record (for the "recognized" list)
+  // Index existing strict identity keys → record (for the "recognized" list).
+  // Season scoping: when this import targets a season, records that carry a
+  // DIFFERENT season are not duplicates — a returning player must be able to
+  // register again next season. Records with no season tag still match any
+  // season (safer until they're backfilled).
   const existingByKey = new Map();
+  const otherSeasonIds = new Set();
   for (const r of getRecords(rtype)) {
-    const k = identityKey(parse(r.data));
+    const d = parse(r.data);
+    if (season && rtype === "player" && d.season && String(d.season) !== String(season)) {
+      otherSeasonIds.add(r.id);
+      continue;
+    }
+    const k = identityKey(d);
     if (k) existingByKey.set(k, { id: r.id, name: r.name });
   }
   const seenKeys = new Set(existingByKey.keys());
@@ -68,6 +79,7 @@ export async function POST(req) {
       }
     }
     if (source) data.township = source;
+    if (season) data.season = season;
 
     const displayName = data.full_name || data.name || `(row ${n + 1})`;
     const key = identityKey(data);
@@ -83,7 +95,11 @@ export async function POST(req) {
     // 2) Soft / ambiguous match (FR-1.3, OQ-1): same first+last, corroborating phone or age.
     //    Never silently merge. Surface for review unless the user already cleared this row.
     if (!allowAmbiguous.has(n + 1)) {
-      const candidates = findAmbiguousMatches(rtype, data);
+      // Season scoping: a look-alike from a different season isn't ambiguous —
+      // it's the same kid registering again. Only same-season (or untagged)
+      // records count as possible duplicates.
+      const candidates = findAmbiguousMatches(rtype, data)
+        .filter((c) => !otherSeasonIds.has(c.id));
       if (candidates.length) {
         ambiguous.push({
           rowIndex: n + 1,

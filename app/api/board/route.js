@@ -1,5 +1,6 @@
 import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag } from "@/lib/tools.js";
 import { setActorFromReq } from "@/lib/actor.js";
+import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -35,12 +36,13 @@ function scanDetail(p) {
 export async function POST(req) {
   setActorFromReq(req);
   const b = await req.json();
+  const season = seasonFromReq(req); // sidebar season picker
 
   if (b.action === "board") {
     ensurePlayerNotes(); ensurePlayerKeyTag(); seedAttendance();
     const checked = getCheckins(b.week);
     const fields = getFields("player").map((f) => ({ name: f.name, label: f.label, data_type: f.data_type, required: !!f.required, options: f.options }));
-    const players = getRecords("player").map((r) => {
+    const players = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => {
       const d = parse(r.data);
       const issues = playerIssues({ id: r.id, ...d });
       return { id: r.id, name: r.name || d.full_name || `#${r.id}`, team: d.team || "", league: d.league || "", division: d.division || "", present: checked.has(r.id), data: d, issues, status: issues.length ? "flag" : "clear" };
@@ -56,7 +58,7 @@ export async function POST(req) {
     seedAttendance();
     const q = String(b.query || "").trim();
     if (!q) return Response.json({ status: "empty" });
-    const all = getRecords("player").map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
+    const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
     const dq = digits(q);
     let matches;
     if (/[a-z]/i.test(q)) { const ql = q.toLowerCase(); matches = all.filter((p) => String(p.name).toLowerCase().includes(ql)); }
@@ -70,7 +72,7 @@ export async function POST(req) {
   }
 
   if (b.action === "scan_id") {
-    const all = getRecords("player").map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
+    const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
     const p = all.find((x) => x.id === Number(b.player_id));
     if (!p) return Response.json({ status: "not_found" });
     const already = getCheckins(b.week).has(p.id);
@@ -80,7 +82,7 @@ export async function POST(req) {
 
   if (b.action === "detail") {
     seedAttendance();
-    const all = getRecords("player").map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
+    const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
     const p = all.find((x) => x.id === Number(b.player_id));
     if (!p) return Response.json({ status: "not_found" });
     const present = getCheckins(b.week).has(p.id);

@@ -6,6 +6,7 @@ import {
   rescheduleDate, pruneCrossDivisionGames,
 } from "@/lib/tools.js";
 import { buildSchedule, weekDate, clockTime, placeOnFields } from "@/lib/schedule.js";
+import { seasonFromReq, leaguesForSeason } from "@/lib/seasons.js";
 import { setActorFromReq } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
@@ -13,15 +14,18 @@ export const dynamic = "force-dynamic";
 export async function POST(req) {
   setActorFromReq(req);
   const b = await req.json();
+  const season = seasonFromReq(req); // sidebar season picker — null = all seasons
 
   if (b.action === "config") {
     const pl = getFields("player").find((f) => f.name === "league");
     let leagues = [];
     try { leagues = pl && pl.options ? JSON.parse(pl.options) : []; } catch {}
+    const snLeagues = leaguesForSeason(season);
+    if (snLeagues) leagues = leagues.filter((l) => snLeagues.includes(l));
     const players = getRecords("player").map((r) => {
       let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {}
-      return { team: d.team || "", league: d.league || "", second_league: d.second_league || "", division: d.division || "" };
-    }).filter((p) => p.team);
+      return { team: d.team || "", league: d.league || "", second_league: d.second_league || "", division: d.division || "", season: d.season ? String(d.season) : "" };
+    }).filter((p) => p.team && (!season || !p.season || p.season === season));
     function teamStats(league) {
       const stats = {};
       for (const p of players) {
@@ -34,15 +38,15 @@ export async function POST(req) {
     }
     return Response.json({
       leagues,
-      allTeams: scheduleTeams(null),
-      teamsByLeague: Object.fromEntries(leagues.map((l) => [l, scheduleTeams(l)])),
+      allTeams: scheduleTeams(null, season),
+      teamsByLeague: Object.fromEntries(leagues.map((l) => [l, scheduleTeams(l, season)])),
       teamStats: Object.fromEntries(leagues.map((l) => [l, teamStats(l)])),
       allTeamStats: teamStats(null),
     });
   }
 
   if (b.action === "preview") {
-    const autoTeams = scheduleTeams(b.league || null);
+    const autoTeams = scheduleTeams(b.league || null, season);
     const teams = Array.isArray(b.teams) && b.teams.length ? b.teams.map(String) : autoTeams;
     const gap = Number(b.slotMins) || 0;
     const fields = Array.isArray(b.fields) ? b.fields.map((f) => String(f).trim()).filter(Boolean) : [];
@@ -85,9 +89,9 @@ export async function POST(req) {
     });
   }
 
-  if (b.action === "save") return Response.json(saveSchedule(b.league || null, b.games || []));
-  if (b.action === "clear") return Response.json({ ...saveSchedule(b.league || null, []), cleared: true });
-  if (b.action === "list") return Response.json({ games: getSchedule(b.league || null) });
+  if (b.action === "save") return Response.json(saveSchedule(b.league || null, b.games || [], season));
+  if (b.action === "clear") return Response.json({ ...saveSchedule(b.league || null, [], season), cleared: true });
+  if (b.action === "list") return Response.json({ games: getSchedule(b.league || null, season) });
   if (b.action === "assign_ref") { updateRecord(Number(b.game_id), { referee: b.referee || "" }); return Response.json({ status: "ok" }); }
 
   if (b.action === "mark_worked") return Response.json(markGameWorked(b.game_id, b.ref_name));
@@ -97,7 +101,7 @@ export async function POST(req) {
 
   if (b.action === "set_score") return Response.json(setGameScore(b.game_id, { home_score: b.home_score, away_score: b.away_score, forfeit: b.forfeit, note: b.note }));
   if (b.action === "clear_score") return Response.json(clearGameScore(b.game_id));
-  if (b.action === "standings") return Response.json({ rows: getStandings(b.league || null) });
+  if (b.action === "standings") return Response.json({ rows: getStandings(b.league || null, season) });
 
   if (b.action === "blackouts_list") return Response.json({ blackouts: listBlackouts(b.league || null) });
   if (b.action === "blackout_add") return Response.json(addBlackout(b.date, b.league || null, b.reason || ""));

@@ -14,12 +14,19 @@ export default function ImportPlayers({ onDone, go }) {
   const [filename, setFilename] = useState("");
   const [detection, setDetection] = useState(null);
   const [flash, setFlash] = useState(null);
+  const [season, setSeason] = useState("");        // which season this upload is for
+  const [seasonOpts, setSeasonOpts] = useState([]);
 
   async function load() {
     const full = await api.schema();
     if (!full.schema?.player) { setFields(null); return; }
     const s = await api.schema("player");
     setFields(s.fields || []);
+    try {
+      const sl = await api.seasonsList();
+      setSeasonOpts(sl.seasons || []);
+      if (sl.active) setSeason(sl.active); // default new uploads to the current season
+    } catch {}
   }
   useEffect(() => { load(); }, []);
 
@@ -91,7 +98,7 @@ export default function ImportPlayers({ onDone, go }) {
   }
 
   async function doImport() {
-    const res = await api.importRows({ type: "player", rows, mapping, source: source || null, sourceFile: filename });
+    const res = await api.importRows({ type: "player", rows, mapping, source: source || null, season: season || null, sourceFile: filename });
     const bits = [`Imported ${res.added}.`];
     if (res.recognized || res.duplicates) bits.push(`${res.recognized || res.duplicates} already in system.`);
     if (res.ambiguous?.length) bits.push(`${res.ambiguous.length} need review on the Players page.`);
@@ -121,6 +128,20 @@ export default function ImportPlayers({ onDone, go }) {
                 <option value="">(use the file's own column)</option>
                 {twpOpts.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
+            </div>
+          )}
+          {seasonOpts.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <label className="fld">Which season is this upload for?</label>
+              <select value={season} onChange={(e) => setSeason(e.target.value)}>
+                <option value="">(no season)</option>
+                {seasonOpts.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <div className="muted small" style={{ marginTop: 4 }}>
+                Every imported player is tagged with this season. A returning player from a
+                previous season imports as a new registration, not a duplicate. Manage seasons
+                on Leagues &amp; Assignment → Seasons.
+              </div>
             </div>
           )}
           <div className="muted small" style={{ margin: "12px 0 4px" }}>Found {rows.length} rows. Match each detail to a column:</div>

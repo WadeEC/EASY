@@ -1,6 +1,7 @@
 import { getRecords, getFields, seedAttendance, getCheckins, setCheckin, updateRecord } from "@/lib/tools.js";
 import { getRow, now, logAudit } from "@/lib/db.js";
 import { getActor, setActorFromReq } from "@/lib/actor.js";
+import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 import { emit } from "@/lib/event-bus.js";
 
 export const dynamic = "force-dynamic";
@@ -16,12 +17,13 @@ function weekStartISO(iso) {
 
 export async function POST(req) {
   const b = await req.json();
+  const season = seasonFromReq(req); // sidebar season picker
 
   if (b.action === "list") {
     seedAttendance();
     const checked = getCheckins(b.week);
     const fields = getFields("player").map((f) => ({ name: f.name, label: f.label, data_type: f.data_type, required: !!f.required, options: f.options }));
-    const all = getRecords("player").map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: d.division || "", team: d.team || "", present: checked.has(r.id), data: d }; });
+    const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: d.division || "", team: d.team || "", present: checked.has(r.id), data: d }; });
     const leagues = [...new Set(all.map((p) => p.league).filter(Boolean))];
     const divisions = [...new Set(all.map((p) => p.division).filter(Boolean))];
     const teams = [...new Set(all.map((p) => p.team).filter(Boolean))];
@@ -87,7 +89,7 @@ export async function POST(req) {
     const weeks = [...weeksSet].sort().slice(0, 30); // chronological (Week 1 → last)
     const byPlayer = {};
     for (const r of recs) { const id = Number(r.player_id); (byPlayer[id] = byPlayer[id] || new Set()).add(String(r.week)); }
-    const all = getRecords("player").map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: d.division || "", team: d.team || "" }; });
+    const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: d.division || "", team: d.team || "" }; });
     let players = all.slice();
     if (b.league) players = players.filter((p) => p.league === b.league);
     if (b.division) players = players.filter((p) => p.division === b.division);
@@ -106,7 +108,7 @@ export async function POST(req) {
     seedAttendance();
     const q = String(b.query || "").trim();
     if (!q) return Response.json({ status: "empty" });
-    const all = getRecords("player").map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
+    const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
     let matches;
     if (/^#?\d+$/.test(q)) {
       const idn = Number(q.replace(/^#/, ""));

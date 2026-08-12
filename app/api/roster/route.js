@@ -4,12 +4,14 @@ import {
   getFields, getRecords, getDivisions,
 } from "@/lib/tools.js";
 import { setActorFromReq } from "@/lib/actor.js";
+import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req) {
   setActorFromReq(req);
   const b = await req.json();
+  const season = seasonFromReq(req); // sidebar season picker
 
   if (b.action === "move") {
     const res = movePlayer(Number(b.id), b.changes || {});
@@ -30,7 +32,9 @@ export async function POST(req) {
     const pl = getFields("player");
     const lf = pl.find((f) => f.name === "league");
     let leagues = []; try { leagues = lf?.options ? JSON.parse(lf.options) : []; } catch {}
-    const players = getRecords("player").map((r) => {
+    const snLeagues = leaguesForSeason(season);
+    if (snLeagues) leagues = leagues.filter((l) => snLeagues.includes(l));
+    const players = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => {
       let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {}
       return {
         id: r.id,
@@ -38,6 +42,7 @@ export async function POST(req) {
         league: d.league || "",
         second_league: d.second_league || "",
         division: d.division || "",
+        season: d.season || "",
         age: d.age ?? "",
       };
     });

@@ -1,4 +1,5 @@
 import { getRecords } from "@/lib/tools.js";
+import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -45,10 +46,11 @@ function details(p, coaches, games) {
 
 export async function POST(req) {
   const b = await req.json();
+  const season = seasonFromReq(req); // sidebar season picker
   const method = b.method || "name";
   const q = String(b.query || "").trim();
 
-  const all = getRecords("player").map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
+  const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => ({ id: r.id, name: r.name || parse(r.data).full_name || `#${r.id}`, ...parse(r.data) }));
   const coaches = getRecords("coach").map((r) => { const d = parse(r.data); return { name: r.name || d.full_name || `#${r.id}`, role: d.role || "", team: d.team || "" }; });
   const games = getRecords("game").map((r) => parse(r.data));
 

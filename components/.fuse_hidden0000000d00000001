@@ -156,23 +156,6 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
   const [confirmDelOpen, setConfirmDelOpen] = useState(false);
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [activeLg, setActiveLg] = useState(null);
-  // Season scope — follows the sidebar's global season picker (localStorage
-  // ff_season). Changing the picker remounts this component, so reading it once
-  // per mount stays in sync. Untagged records show under every season.
-  const seasonSel = (() => {
-    try { return (typeof localStorage !== "undefined" && localStorage.getItem("ff_season")) || ""; } catch { return ""; }
-  })();
-  // Which leagues run in the selected season (Start-a-season mapping). Null =
-  // no mapping recorded = show every league (back-compat).
-  const [seasonLeagueMap, setSeasonLeagueMap] = useState(null);
-  useEffect(() => {
-    if (type !== "player") { setSeasonLeagueMap(null); return; }
-    let dead = false;
-    (async () => {
-      try { const s = await api.seasonsList(); if (!dead && !s.error) setSeasonLeagueMap(s.leaguesBySeason || {}); } catch {}
-    })();
-    return () => { dead = true; };
-  }, [type]);
   const [moveTarget, setMoveTarget] = useState(null); // {id, name, league, second_league, division}
   const [moveCtx, setMoveCtx] = useState({ leagues: [], divisions: [], locks: [] });
   const [moveError, setMoveError] = useState("");
@@ -273,10 +256,6 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
     if (q && !((r.name || "") + " " + (r.data || "")).toLowerCase().includes(q.toLowerCase())) return false;
     if (aiPredicate && !_matches(aiPredicate, dataOf(r))) return false;
     if (starsOnly && !dataOf(r).all_star) return false;
-    if (seasonSel && type === "player") {
-      const s = String(dataOf(r).season || "");
-      if (s && s !== seasonSel) return false; // untagged records show everywhere
-    }
     return true;
   });
 
@@ -339,11 +318,6 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
   const hasDivision = fields.some((f) => f.name === "division");
   let leagueOpts = [];
   if (leagueField && leagueField.options) { try { leagueOpts = JSON.parse(leagueField.options); } catch {} }
-  // Scope the league pills to the selected season's leagues, when mapped.
-  if (type === "player" && seasonSel && seasonLeagueMap) {
-    const snLg = seasonLeagueMap[seasonSel];
-    if (Array.isArray(snLg) && snLg.length) leagueOpts = leagueOpts.filter((l) => snLg.includes(l));
-  }
   const internal = INTERNAL_FIELDS_BY_TYPE[type] || new Set();
   const cols = fields.filter((f) => f.name !== "league" && !(hasDivision && f.name === "division") && !internal.has(f.name));
 
@@ -367,7 +341,7 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
 
   const byDivision = (arr) => {
     const by = {};
-    for (const r of arr) { const dv = String(dataOf(r).division || "").trim() || "No division"; (by[dv] = by[dv] || []).push(r); }
+    for (const r of arr) { const dv = (dataOf(r).division || "").trim() || "No division"; (by[dv] = by[dv] || []).push(r); }
     return Object.entries(by).sort((a, b) => (a[0] === "No division" ? 1 : b[0] === "No division" ? -1 : a[0].localeCompare(b[0])));
   };
   async function openMove(r) {
@@ -516,9 +490,6 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
       <div className="between" style={{ margin: "8px 0", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <div className="small" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span className="muted">{shown.length} of {records.length}{hiddenCount > 0 ? ` · ${hiddenCount} column${hiddenCount === 1 ? "" : "s"} hidden` : ""}</span>
-          {type === "player" && seasonSel && (
-            <span className="chip" title="Set by the season picker in the sidebar">{seasonSel}</span>
-          )}
           {hasAllStarField && allStarCount > 0 && (
             <button
               type="button"

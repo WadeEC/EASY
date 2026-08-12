@@ -24,7 +24,11 @@ export default function TeamEditor({ go, onAsk }) {
 
   async function load() {
     const r = await api.records("player");
-    setPlayers((r.records || []).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.full_name || `#${x.id}`, team: d.team || "", league: d.league || "", division: d.division || "", data: d }; }));
+    // Scope to the sidebar's season picker (untagged players show everywhere).
+    let sn = "";
+    try { sn = (typeof localStorage !== "undefined" && localStorage.getItem("ff_season")) || ""; } catch {}
+    const inScope = (x) => { if (!sn) return true; const s = parse(x.data).season; return !s || String(s) === sn; };
+    setPlayers((r.records || []).filter(inScope).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.full_name || `#${x.id}`, team: d.team || "", league: d.league || "", division: d.division || "", data: d }; }));
     try { const s = await api.schema("player"); setFields(s.fields || []); } catch {}
     try { const c = await api.records("coach"); setCoaches((c.records || []).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.full_name || `#${x.id}`, role: d.role || "", team: d.team || "" }; })); } catch { setCoaches([]); }
     try { const la = await api.teamsLowAvail(); setLowSet(new Set((la.ids || []).map(Number))); } catch {}

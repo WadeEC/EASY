@@ -124,6 +124,7 @@ export default function Leagues({ refresh, onAsk }) {
       <div className="btn-row" style={{ marginBottom: 16 }}>
         <button className={"pill" + (tab === "townships" ? " active" : "")} onClick={() => setTab("townships")}>Townships</button>
         <button className={"pill" + (tab === "leagues" ? " active" : "")} onClick={() => setTab("leagues")}>Leagues</button>
+        <button className={"pill" + (tab === "seasons" ? " active" : "")} onClick={() => setTab("seasons")}>Seasons</button>
         <button className={"pill" + (tab === "assignment" ? " active" : "")} onClick={() => setTab("assignment")}>Assignment</button>
         <button className={"pill" + (tab === "divisions" ? " active" : "")} onClick={() => setTab("divisions")}>Divisions</button>
         <button className={"pill" + (tab === "teams" ? " active" : "")} onClick={() => setTab("teams")}>Team building</button>
@@ -222,6 +223,7 @@ export default function Leagues({ refresh, onAsk }) {
       </div>
       )}
 
+      {tab === "seasons" && <SeasonsSettings refresh={refresh} />}
       {tab === "divisions" && <DivisionsSettings onAsk={onAsk} />}
       {tab === "teams" && <TeamSettings onAsk={onAsk} />}
       {tab === "flags" && <FlagsSettings onAsk={onAsk} />}
@@ -235,9 +237,181 @@ function upd(setter, arr, i, key, value) {
   setter(next);
 }
 
+// Seasons — the top-level time containers. Start a season, choose which
+// leagues run in it (adopt a past league name or add a new one), then upload
+// rosters into it. Rules and divisions are keyed to the league NAME, so an
+// adopted league keeps its assignment rules and age divisions automatically.
+function SeasonsSettings({ refresh }) {
+  const [info, setInfo] = useState(null); // { seasons, active, counts, untagged, allLeagues, leaguesBySeason }
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState(new Set()); // adopted league names
+  const [newLeagues, setNewLeagues] = useState(""); // comma-separated new names
+  const [backLabel, setBackLabel] = useState("");
+  const [editFor, setEditFor] = useState(null);     // season whose leagues are being edited
+  const [editPicked, setEditPicked] = useState(new Set());
+  const [flash, setFlash] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() { setInfo(await api.seasonsList()); }
+  useEffect(() => { load(); }, []);
+  if (!info || info.error) return <div className="card"><div className="muted">Loading…</div></div>;
+
+  const seasons = info.seasons || [];
+  const counts = info.counts || {};
+  const allLeagues = info.allLeagues || [];
+  const bySeason = info.leaguesBySeason || {};
+
+  const togglePick = (set, setter, lg) => {
+    const next = new Set(set);
+    if (next.has(lg)) next.delete(lg); else next.add(lg);
+    setter(next);
+  };
+
+  async function start() {
+    const label = name.trim();
+    if (!label) return setFlash({ ok: false, text: "Name the season, e.g. Fall 2026." });
+    const extra = newLeagues.split(",").map((s) => s.trim()).filter(Boolean);
+    const leagues = [...picked, ...extra];
+    if (!leagues.length) return setFlash({ ok: false, text: "Pick at least one league for this season (or add a new one)." });
+    setBusy(true);
+    try {
+      const res = await api.seasonStart(label, leagues);
+      if (res.error) return setFlash({ ok: false, text: res.error });
+      setFlash({ ok: true, text: `Season "${label}" started with ${res.leagues.length} league(s) — it's now the current season. Adopted leagues keep their rules and divisions.` });
+      setName(""); setPicked(new Set()); setNewLeagues("");
+      await load(); refresh && refresh();
+    } finally { setBusy(false); }
+  }
+  async function makeActive(label) {
+    const res = await api.seasonSetActive(label);
+    if (res.error) return setFlash({ ok: false, text: res.error });
+    setFlash({ ok: true, text: `"${label}" is now the current season — new uploads default to it.` });
+    await load();
+  }
+  async function saveLeagues() {
+    const res = await api.seasonSetLeagues(editFor, [...editPicked]);
+    if (res.error) return setFlash({ ok: false, text: res.error });
+    setFlash({ ok: true, text: `Leagues for "${editFor}" saved.` });
+    setEditFor(null); await load(); refresh && refresh();
+  }
+  async function backfill() {
+    const label = backLabel.trim();
+    if (!label) return setFlash({ ok: false, text: "Name the season these existing players belong to (e.g. Spring 2026)." });
+    setBusy(true);
+    try {
+      const res = await api.seasonBackfill(label);
+      if (res.error) return setFlash({ ok: false, text: res.error });
+      setFlash({ ok: true, text: `Tagged ${res.tagged} player(s)${res.games ? ` and ${res.games} game(s)` : ""} as "${label}". Every change is in the Change Log and can be undone in Time Machine.` });
+      setBackLabel(""); await load(); refresh && refresh();
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      {flash && <div className={"note " + (flash.ok ? "good" : "warn")}>{flash.text}</div>}
+
+      <div className="card">
+        <div className="between"><h2 style={{ margin: 0 }}>Seasons</h2>{seasons.length > 0 && <span className="chip">{seasons.length}</span>}</div>
+        <p className="muted small">
+          A season is the container everything lives in: start it, choose its leagues, upload rosters
+          into it. The sidebar picker scopes every page to one season.
+        </p>
+        <div className="stack">
+          {seasons.map((s) => (
+            <div key={s} style={{ borderBottom: "1px solid var(--line-soft)", paddingBottom: 8 }}>
+              <div className="between">
+                <div>
+                  <b>{s}</b>{" "}
+                  <span className="muted small">· {counts[s] || 0} player{(counts[s] || 0) === 1 ? "" : "s"}</span>
+                  {info.active === s && <span className="chip" style={{ marginLeft: 8 }}>current</span>}
+                </div>
+                <div className="btn-row">
+                  <button className="btn ghost sm" onClick={() => {
+                    setEditFor(editFor === s ? null : s);
+                    setEditPicked(new Set(bySeason[s] || []));
+                  }}>{editFor === s ? "Close" : "Edit leagues"}</button>
+                  {info.active !== s && <button className="btn sm" onClick={() => makeActive(s)}>Make current</button>}
+                </div>
+              </div>
+              <div className="chip-well" style={{ marginTop: 6 }}>
+                {(bySeason[s] || []).length
+                  ? (bySeason[s] || []).map((lg) => <span className="chip brand" key={lg}>{lg}</span>)
+                  : <span className="muted small">All leagues (no per-season list set)</span>}
+              </div>
+              {editFor === s && (
+                <div className="card" style={{ marginTop: 8, background: "var(--line-soft)" }}>
+                  <div className="stack" style={{ gap: 4 }}>
+                    {allLeagues.map((lg) => (
+                      <label key={lg} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <input type="checkbox" style={{ width: "auto" }} checked={editPicked.has(lg)} onChange={() => togglePick(editPicked, setEditPicked, lg)} />
+                        {lg}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="btn-row" style={{ marginTop: 8 }}>
+                    <button className="btn primary sm" onClick={saveLeagues}>Save leagues</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          {!seasons.length && <div className="muted small">No seasons yet — start your first below.</div>}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Start a season</h3>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          Name it, pick its leagues, done — it becomes the current season and new uploads flow into it.
+          Adopting a league name from a past season carries its assignment rules and age divisions forward automatically.
+        </p>
+        <label className="fld">Season name</label>
+        <input placeholder="e.g. Fall 2026" value={name} onChange={(e) => setName(e.target.value)} />
+        {allLeagues.length > 0 && (
+          <>
+            <label className="fld" style={{ marginTop: 10 }}>Adopt leagues from past seasons</label>
+            <div className="stack" style={{ gap: 4 }}>
+              {allLeagues.map((lg) => (
+                <label key={lg} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" style={{ width: "auto" }} checked={picked.has(lg)} onChange={() => togglePick(picked, setPicked, lg)} />
+                  {lg}
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+        <label className="fld" style={{ marginTop: 10 }}>Or add new league(s) — comma separated</label>
+        <input placeholder="e.g. Saturday Phoenixville" value={newLeagues} onChange={(e) => setNewLeagues(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") start(); }} />
+        <div className="btn-row" style={{ marginTop: 12 }}>
+          <button className="btn primary" disabled={busy} onClick={start}>{busy ? "Starting…" : "Start season"}</button>
+        </div>
+      </div>
+
+      {info.untagged > 0 && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>{info.untagged} player{info.untagged === 1 ? " has" : "s have"} no season yet</h3>
+          <p className="muted small" style={{ marginTop: 0 }}>
+            These are records from before seasons existed. Tag them with the season they belong to
+            (e.g. Spring 2026). This only fills the blank season field — nothing else changes, every
+            update is logged to the Change Log, and Time Machine can revert it. (Typing a season here
+            does NOT change the current season.)
+          </p>
+          <div className="addbar">
+            <input placeholder="e.g. Spring 2026" value={backLabel} onChange={(e) => setBackLabel(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") backfill(); }} />
+            <button className="btn primary" disabled={busy} onClick={backfill}>{busy ? "Tagging…" : `Tag ${info.untagged} player${info.untagged === 1 ? "" : "s"}`}</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function RosterMoves({ locks, reloadLocks, setFlash }) {
   const [ctx, setCtx] = useState(null);
   const [sourceLeague, setSourceLeague] = useState("");
+  const [sourceSeason, setSourceSeason] = useState("");
   const [selected, setSelected] = useState(new Set());
   const [destLeague, setDestLeague] = useState("");
   const [destDivision, setDestDivision] = useState("");
@@ -252,7 +426,10 @@ function RosterMoves({ locks, reloadLocks, setFlash }) {
 
   if (!ctx) return <div className="card"><div className="muted">Loading…</div></div>;
 
-  const filtered = ctx.players.filter((p) => !sourceLeague || p.league === sourceLeague || p.second_league === sourceLeague);
+  const seasonOpts = [...new Set(ctx.players.map((p) => p.season).filter(Boolean))].sort();
+  const filtered = ctx.players.filter((p) =>
+    (!sourceLeague || p.league === sourceLeague || p.second_league === sourceLeague) &&
+    (!sourceSeason || (sourceSeason === "(no season)" ? !p.season : (!p.season || p.season === sourceSeason))));
   const divisionsForDest = (ctx.divisions || []).filter((d) => !d.league || d.league === destLeague);
   const toggle = (id) => {
     const next = new Set(selected);
@@ -275,16 +452,28 @@ function RosterMoves({ locks, reloadLocks, setFlash }) {
       <h2 style={{ marginTop: 0 }}>Move players between leagues / divisions</h2>
       <p className="muted small">Moves involving locked leagues are blocked automatically.</p>
 
-      <label className="fld">From league</label>
-      <select value={sourceLeague} onChange={(e) => setSourceLeague(e.target.value)}>
-        <option value="">(any)</option>
-        {ctx.leagues.map((lg) => <option key={lg} value={lg}>{lg}</option>)}
-      </select>
+      <div className="grid cols-2">
+        <div>
+          <label className="fld">From league</label>
+          <select value={sourceLeague} onChange={(e) => setSourceLeague(e.target.value)}>
+            <option value="">(any)</option>
+            {ctx.leagues.map((lg) => <option key={lg} value={lg}>{lg}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="fld">Season</label>
+          <select value={sourceSeason} onChange={(e) => setSourceSeason(e.target.value)}>
+            <option value="">(any season)</option>
+            {seasonOpts.map((s) => <option key={s} value={s}>{s}</option>)}
+            <option value="(no season)">No season tag</option>
+          </select>
+        </div>
+      </div>
 
       <div className="muted small" style={{ margin: "10px 0 4px" }}>{filtered.length} players · {selected.size} selected</div>
       <div className="card" style={{ maxHeight: 240, overflow: "auto", padding: 0 }}>
         <table className="tbl">
-          <thead><tr><th></th><th>Player</th><th>Age</th><th>League</th><th>Also in</th><th>Division</th></tr></thead>
+          <thead><tr><th></th><th>Player</th><th>Age</th><th>League</th><th>Also in</th><th>Division</th><th>Season</th></tr></thead>
           <tbody>
             {filtered.map((p) => (
               <tr key={p.id}>
@@ -294,9 +483,10 @@ function RosterMoves({ locks, reloadLocks, setFlash }) {
                 <td>{p.league}</td>
                 <td>{p.second_league}</td>
                 <td>{p.division}</td>
+                <td>{p.season}</td>
               </tr>
             ))}
-            {!filtered.length && <tr><td colSpan={6} className="muted" style={{ padding: 12 }}>No players match.</td></tr>}
+            {!filtered.length && <tr><td colSpan={7} className="muted" style={{ padding: 12 }}>No players match.</td></tr>}
           </tbody>
         </table>
       </div>

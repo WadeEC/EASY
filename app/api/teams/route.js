@@ -6,6 +6,7 @@ import {
 } from "@/lib/tools.js";
 import { buildTeams } from "@/lib/teams.js";
 import { setActorFromReq } from "@/lib/actor.js";
+import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; 
 export async function POST(req) {
   setActorFromReq(req);
   const b = await req.json();
+  const season = seasonFromReq(req); // sidebar season picker — null = all seasons
 
   if (b.action === "config") {
     const hasPlayer = getRecordTypes().some((t) => t.name === "player");
@@ -22,10 +24,13 @@ export async function POST(req) {
       createTeamRule("coach_child", "", "Keep each coach's child on their team"); // admin can toggle this
     const fields = getFields("player");
     const lf = fields.find((f) => f.name === "league");
+    let leagues = lf && lf.options ? JSON.parse(lf.options) : [];
+    const snLeagues = leaguesForSeason(season);
+    if (snLeagues) leagues = leagues.filter((l) => snLeagues.includes(l));
     return Response.json({
       hasPlayer,
       hasCoach: getRecordTypes().some((t) => t.name === "coach"),
-      leagues: lf && lf.options ? JSON.parse(lf.options) : [],
+      leagues,
       fields: fields.map((f) => ({ name: f.name, label: f.label, type: f.data_type })),
       rules: getTeamRules(),
     });
@@ -70,7 +75,8 @@ export async function POST(req) {
   if (b.action === "toggle_rule") return Response.json(setRuleActive(b.id, b.active));
 
   if (b.action === "preview") {
-    const all = getRecords("player").map((r) => ({ id: r.id, name: r.name, ...parse(r.data) }));
+    const all = getRecords("player").map((r) => ({ id: r.id, name: r.name, ...parse(r.data) }))
+      .filter((p) => inSeason(p, season));
     let players = b.league
       ? all.filter((p) => (p.league || "") === b.league || (p.second_league || "") === b.league)
       : all;

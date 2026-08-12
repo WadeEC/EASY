@@ -128,7 +128,11 @@ export default function Board({ go }) {
     await load();
     if (result && result.player && result.player.id === p.id) { const r = await api.boardDetail({ player_id: p.id, week }); setResult(r); }
   }
-  function onScanKey(e) { if (e.key === "Enter" && scanQ.trim()) { doScan(scanQ.trim()); setScanQ(""); } }
+  function onScanKey(e) {
+    if (e.key !== "Enter" || !scanQ.trim()) return;
+    if (suggestions.length) { pick(suggestions[0].id); setScanQ(""); }
+    else { doScan(scanQ.trim()); setScanQ(""); }
+  }
   function openEdit(p) { setEdit(p); setVals({ ...(p.data || {}) }); }
   async function saveEdit() {
     const res = await api.updateRecord(edit.id, vals);
@@ -157,6 +161,25 @@ export default function Board({ go }) {
   const groups = {};
   for (const u of filtered) (groups[groupKey(u)] = groups[groupKey(u)] || []).push(u);
   const groupNames = Object.keys(groups).sort();
+
+  // Live type-ahead for the check-in box — matches as you type (name or key
+  // tag), best matches first. Enter checks in the top match; clicking a row
+  // checks in that player.
+  const scanNeedle = scanQ.trim().toLowerCase();
+  const suggestions = scanNeedle.length >= 2 && !picks
+    ? data.players
+        .filter((p) => {
+          const nm = String(p.name || "").toLowerCase();
+          const tag = String((p.data && (p.data.key_tag || p.data.scan_number)) || "");
+          return nm.includes(scanNeedle) || (tag && tag.startsWith(scanNeedle));
+        })
+        .sort((a, b) => {
+          const an = String(a.name || "").toLowerCase().startsWith(scanNeedle) ? 0 : 1;
+          const bn = String(b.name || "").toLowerCase().startsWith(scanNeedle) ? 0 : 1;
+          return an - bn || String(a.name || "").localeCompare(String(b.name || ""));
+        })
+        .slice(0, 8)
+    : [];
 
   return (
     <div>
@@ -203,6 +226,25 @@ export default function Board({ go }) {
                 onChange={(e) => setScanQ(e.target.value)} onKeyDown={onScanKey} />
               <button className="btn primary" onClick={() => { if (scanQ.trim()) { doScan(scanQ.trim()); setScanQ(""); } }}>Check in</button>
             </div>
+            {suggestions.length > 0 && (
+              <div className="find-results" style={{ marginTop: 10 }}>
+                {suggestions.map((m) => (
+                  <div className="between" key={m.id}
+                    style={{ padding: "9px 12px", borderTop: "1px solid var(--line-soft)", cursor: "pointer" }}
+                    onClick={() => { pick(m.id); setScanQ(""); }}>
+                    <span className="small">
+                      {m.name}
+                      {m.team ? <span className="muted"> · {m.team}</span> : null}
+                      {m.present ? <span className="muted"> · already checked in</span> : null}
+                    </span>
+                    <button className="btn sm primary" onClick={(e) => { e.stopPropagation(); pick(m.id); setScanQ(""); }}>Check in</button>
+                  </div>
+                ))}
+                <div className="muted small" style={{ padding: "6px 12px", borderTop: "1px solid var(--line-soft)" }}>
+                  Press Enter to check in the top match.
+                </div>
+              </div>
+            )}
             {picks && (
               <div className="find-results" style={{ marginTop: 10 }}>
                 <div className="muted small" style={{ padding: "8px 12px" }}>More than one match — pick one:</div>
