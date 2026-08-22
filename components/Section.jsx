@@ -891,7 +891,8 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
   const [showSourcePicker, setShowSourcePicker] = useState(false);
   const [skipped, setSkipped] = useState([]);
   const [extraTwpOpts, setExtraTwpOpts] = useState([]);
-  const [importSummary, setImportSummary] = useState(null); // { addedNames, recognizedNames, ambiguous, skipped }
+  const [importSummary, setImportSummary] = useState(null); // { addedNames, recognizedNames, updatedNames, ambiguous, skipped }
+  const [refresh_, setRefresh_] = useState(true);           // update people already here from this sheet
   const [pendingRows, setPendingRows] = useState(null);    // snapshot of rows for ambiguous re-submit
   const [pendingMapping, setPendingMapping] = useState(null);
   const [pendingSource, setPendingSource] = useState(null);
@@ -979,12 +980,14 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
   }
 
   async function doImport() {
-    const res = await api.importRows({ type, rows, mapping, source: source || null, sourceFile: filename });
+    const res = await api.importRows({ type, rows, mapping, source: source || null, sourceFile: filename, refresh: refresh_ });
     const summary = {
       added: res.added || 0,
       addedNames: res.addedNames || [],
       recognized: res.recognized ?? res.duplicates ?? 0,
       recognizedNames: res.recognizedNames || [],
+      updated: res.updated || 0,
+      updatedNames: res.updatedNames || [],
       ambiguous: res.ambiguous || [],
       skipped: res.skipped || [],
       unmatched: res.unmatched || [],
@@ -1001,12 +1004,36 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
     }
     setSkipped(summary.skipped);
     const bits = [`Imported ${summary.added}.`];
-    if (summary.recognized) bits.push(`${summary.recognized} already in system.`);
+    if (summary.updated) bits.push(`${summary.updated} updated.`);
+    if (summary.recognized) bits.push(`${summary.recognized - summary.updated} already in system, unchanged.`);
     if (summary.ambiguous.length) bits.push(`${summary.ambiguous.length} need review.`);
     if (summary.skipped.length) bits.push(`${summary.skipped.length} had problems.`);
     setFlash({ ok: true, text: bits.join(" ") });
     // Don't clear rows/columns — user may need to act on ambiguous rows. Clear when summary acknowledged.
     if (!summary.ambiguous.length) { setRows([]); setColumns([]); setDetection(null); setAiResult(null); setAccepted(false); }
+    await reload(); refresh && refresh();
+  }
+
+  // "That's the same kid, their phone just changed." Refreshes the existing
+  // record from this row instead of creating a second one.
+  async function mergeIntoRow(rowIndex, playerId) {
+    if (!pendingRows || !pendingMapping) return;
+    setResubmitBusy((b) => ({ ...b, [rowIndex]: true }));
+    const res = await api.importRows({
+      type, rows: pendingRows, mapping: pendingMapping, source: pendingSource,
+      sourceFile: pendingFilename, refresh: true,
+      updateInto: { [rowIndex]: playerId },
+    });
+    setResubmitBusy((b) => ({ ...b, [rowIndex]: false }));
+    setImportSummary((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      next.ambiguous = (prev.ambiguous || []).filter((a) => a.rowIndex !== rowIndex);
+      next.updated = (prev.updated || 0) + (res.updated || 0);
+      next.updatedNames = [...(prev.updatedNames || []), ...((res.updatedNames || []).filter((x) => x.rowIndex === rowIndex))];
+      if (res.skipped?.length) next.skipped = [...(prev.skipped || []), ...res.skipped.filter((x) => x.startsWith(`Row ${rowIndex} `))];
+      return next;
+    });
     await reload(); refresh && refresh();
   }
 
@@ -1184,6 +1211,17 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
               </div>
             ))}
           </div>
+          <label className="small" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14 }}>
+            <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={refresh_} onChange={(e) => setRefresh_(e.target.checked)} />
+            <span>
+              <b>Update people who are already here</b>
+              <div className="muted small">
+                A re-upload of the same roster refreshes changed details — a new phone number, a corrected
+                age, a jersey size that was blank. Blank cells are left alone, and teams, jerseys, notes and
+                check-in history are never touched. Untick to add new people only.
+              </div>
+            </span>
+          </label>
           <div className="btn-row" style={{ marginTop: 16 }}>
             <button className="btn primary" onClick={doImport}>Import {rows.length} {plural(L).toLowerCase()}</button>
           </div>
@@ -1198,6 +1236,7 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
           <div className="btn-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
             <span className="chip good">Newly added: {importSummary.added}</span>
             <span className="chip">Rows read: {(importSummary.added || 0) + (importSummary.recognized || 0) + (importSummary.ambiguous?.length || 0) + (importSummary.skipped?.length || 0)}</span>
+            {importSummary.updated > 0 && <span className="chip brand">Details updated: {importSummary.updated}</span>}
             <span className="chip">Already in system: {importSummary.recognized}</span>
             {importSummary.ambiguous?.length > 0 && <span className="chip brand">Needs review: {importSummary.ambiguous.length}</span>}
             {importSummary.skipped?.length > 0 && <span className="chip">Problems: {importSummary.skipped.length}</span>}
@@ -1206,7 +1245,11 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
           {importSummary.ambiguous?.length > 0 && (
             <div style={{ borderTop: "1px solid var(--line)", paddingTop: 10, marginBottom: 12 }}>
               <h4 style={{ margin: "0 0 4px" }}>Ambiguous matches — review before merging</h4>
-              <p className="muted small" style={{ marginTop: 0 }}>Same name + matching phone or close age as an existing record. Decide each — don't let the system silently merge.</p>
+              <p className="muted small" style={{ marginTop: 0 }}>
+                Same name and a matching phone or close age, but not an exact match — usually the same kid with a
+                new phone number. Nothing is merged automatically, because two children really can share a name;
+                say which it is and the details get updated (or added) accordingly.
+              </p>
               <div className="stack" style={{ gap: 8 }}>
                 {importSummary.ambiguous.map((a) => (
                   <div key={a.rowIndex} className="card" style={{ padding: 10, borderColor: "var(--brand)", background: "var(--brand-soft)" }}>
@@ -1225,9 +1268,16 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
                           ))}
                         </ul>
                       </div>
-                      <div className="btn-row" style={{ gap: 6, flexShrink: 0 }}>
-                        <button className="btn primary sm" disabled={!!resubmitBusy[a.rowIndex]} onClick={() => addAnywayRow(a.rowIndex)}>{resubmitBusy[a.rowIndex] ? "Adding…" : "Add as new"}</button>
-                        <button className="btn ghost sm" onClick={() => skipAmbiguousRow(a.rowIndex)}>Skip (same person)</button>
+                      <div className="btn-row" style={{ gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {a.candidates.map((c) => (
+                          <button key={c.id} className="btn primary sm" disabled={!!resubmitBusy[a.rowIndex]}
+                            title="Same person — update their details from this row. Teams, jerseys and notes are left alone."
+                            onClick={() => mergeIntoRow(a.rowIndex, c.id)}>
+                            {resubmitBusy[a.rowIndex] ? "Updating…" : (a.candidates.length > 1 ? `Update #${c.id}` : "Same person — update them")}
+                          </button>
+                        ))}
+                        <button className="btn sm" disabled={!!resubmitBusy[a.rowIndex]} onClick={() => addAnywayRow(a.rowIndex)}>{resubmitBusy[a.rowIndex] ? "Adding…" : "Different person — add as new"}</button>
+                        <button className="btn ghost sm" onClick={() => skipAmbiguousRow(a.rowIndex)}>Skip</button>
                       </div>
                     </div>
                   </div>
@@ -1261,6 +1311,32 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
               </div>
             );
           })()}
+
+          {importSummary.updatedNames?.length > 0 && (
+            <details style={{ marginTop: 8 }} open>
+              <summary className="muted small">
+                {importSummary.updatedNames.length} {importSummary.updatedNames.length === 1 ? "person was" : "people were"} already here and this sheet had newer details — click to see exactly what changed
+              </summary>
+              <table className="tbl" style={{ marginTop: 6 }}>
+                <thead><tr><th>Name</th><th>Field</th><th>Was</th><th>Now</th></tr></thead>
+                <tbody>
+                  {importSummary.updatedNames.flatMap((u) =>
+                    (u.changes || []).map((c, i) => (
+                      <tr key={`${u.id}-${c.field}`}>
+                        <td>{i === 0 ? u.name : ""}</td>
+                        <td className="muted small">{c.field}</td>
+                        <td className="muted">{c.from ?? <i>blank</i>}</td>
+                        <td><b>{c.to}</b></td>
+                      </tr>
+                    )))}
+                </tbody>
+              </table>
+              <div className="muted small" style={{ marginTop: 4 }}>
+                Teams, jerseys, notes and check-in history are never touched by an upload. Every change above
+                is in the Change Log and can be undone.
+              </div>
+            </details>
+          )}
 
           {importSummary.recognizedNames?.length > 0 && (
             <details style={{ marginTop: 8 }}>

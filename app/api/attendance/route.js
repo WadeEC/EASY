@@ -1,6 +1,6 @@
 import {
   getRecords, getFields, seedAttendance, getCheckins, setCheckin, updateRecord,
-  attendanceWeek, saveAttendanceWeek, attendanceWeeks, ATTENDANCE_STATUSES,
+  attendanceWeek, saveAttendanceWeek, attendanceWeeks, ATTENDANCE_STATUSES, divisionOptions, rosterOrder,
 } from "@/lib/tools.js";
 import { getRow, now, logAudit } from "@/lib/db.js";
 import { getActor, bindRequest } from "@/lib/actor.js";
@@ -29,7 +29,8 @@ export async function POST(req) {
     const fields = getFields("player").map((f) => ({ name: f.name, label: f.label, data_type: f.data_type, required: !!f.required, options: f.options }));
     const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: d.division || "", team: d.team || "", present: checked.has(r.id), data: d }; });
     const leagues = [...new Set(all.map((p) => p.league).filter(Boolean))];
-    const divisions = [...new Set(all.map((p) => p.division).filter(Boolean))];
+    // Defined brackets first, in age order — see divisionOptions.
+    const divisions = divisionOptions(all.map((p) => p.division));
     const teams = [...new Set(all.map((p) => p.team).filter(Boolean))];
     const coachesByTeam = {};
     for (const r of getRecords("coach")) { const d = parse(r.data); const t = d.team || ""; if (t) (coachesByTeam[t] = coachesByTeam[t] || []).push({ id: r.id, name: r.name || d.full_name || `#${r.id}`, role: d.role || "", present: checked.has(r.id) }); }
@@ -38,7 +39,7 @@ export async function POST(req) {
     if (b.league) players = players.filter((p) => p.league === b.league);
     if (b.division) players = players.filter((p) => p.division === b.division);
     if (b.team) players = players.filter((p) => p.team === b.team);
-    players.sort((a, c) => String(a.name).localeCompare(String(c.name)));
+    players = players.slice().sort(rosterOrder(divisions));
 
     return Response.json({
       players, present: players.filter((p) => checked.has(p.id)).length, total: players.length,
@@ -131,12 +132,12 @@ export async function POST(req) {
     if (b.league) players = players.filter((p) => p.league === b.league);
     if (b.division) players = players.filter((p) => p.division === b.division);
     if (b.team) players = players.filter((p) => p.team === b.team);
-    players.sort((a, c) => String(a.name).localeCompare(String(c.name)));
+    players = players.slice().sort(rosterOrder());
     const out = players.map((p) => { const set = byPlayer[p.id] || new Set(); return { ...p, present: weeks.map((w) => set.has(w)), count: set.size }; });
     return Response.json({
       weeks, players: out, totalWeeks: weeksSet.size,
       leagues: [...new Set(all.map((p) => p.league).filter(Boolean))],
-      divisions: [...new Set(all.map((p) => p.division).filter(Boolean))],
+      divisions: divisionOptions(all.map((p) => p.division)),
       teams: [...new Set(all.map((p) => p.team).filter(Boolean))],
     });
   }

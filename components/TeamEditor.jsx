@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api.js";
+import { divisionChoices } from "@/lib/ui.js";
 import FieldInput from "./FieldInput.jsx";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -20,10 +21,18 @@ export default function TeamEditor({ go, onAsk }) {
   const [vals, setVals] = useState({});
   const [aiText, setAiText] = useState("");
   const [over, setOver] = useState(null);
+  const [divisions, setDivisions] = useState([]);   // the defined age brackets
   const dragId = useRef(null);
 
   async function load() {
     const r = await api.records("player");
+    // The brackets you defined — the picker comes from these, not from the
+    // strings sitting in players' division fields. That's how a dropdown ends
+    // up offering "10".
+    try {
+      const dv = await api.records("division");
+      setDivisions((dv.records || []).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.name || `#${x.id}`, league: d.league || "", age_min: d.age_min, age_max: d.age_max }; }));
+    } catch { setDivisions([]); }
     // Scope to the sidebar's season picker (untagged players show everywhere).
     let sn = "";
     try { sn = (typeof localStorage !== "undefined" && localStorage.getItem("ff_season")) || ""; } catch {}
@@ -41,7 +50,11 @@ export default function TeamEditor({ go, onAsk }) {
 
   // Compute leagues/divisions before the early-return so the effects below can read them.
   const leagues = [...new Set((players || []).map((p) => p.league).filter(Boolean))].sort();
-  const divOptions = [...new Set((players || []).filter((p) => p.league === league).map((p) => p.division).filter(Boolean))].sort();
+  // Defined brackets first, youngest first. Anything on a player that isn't a
+  // real bracket is still offered — otherwise those players are unreachable —
+  // but flagged, because it needs cleaning up rather than picking.
+  const divChoices = divisionChoices(divisions, league, (players || []).filter((p) => p.league === league).map((p) => p.division));
+  const divOptions = divChoices.map((c) => c.value);
 
   // The filters are required (no "All" option), so once data lands we anchor on the
   // first available league and the first division within that league. Re-anchor if
@@ -147,7 +160,7 @@ export default function TeamEditor({ go, onAsk }) {
           <div>
             <label className="fld">Division</label>
             <select value={division} onChange={(e) => setDivision(e.target.value)}>
-              {divOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+              {divChoices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
         </div>

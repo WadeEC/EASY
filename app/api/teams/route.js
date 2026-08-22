@@ -2,7 +2,7 @@ import {
   getRecords, getFields, getRecordTypes, addField, updateRecord,
   createTeamRule, getTeamRules, deleteRule, setRuleActive,
   seedCoaches, getCoaches, setAllStarCap, lowAvailabilitySet,
-  linkData, listLinks,
+  linkData, listLinks, getDivisions,
 } from "@/lib/tools.js";
 import { buildTeams } from "@/lib/teams.js";
 import { bindRequest } from "@/lib/actor.js";
@@ -73,6 +73,78 @@ export async function POST(req) {
   if (b.action === "add_rule") return Response.json(createTeamRule(b.type, b.field));
   if (b.action === "del_rule") return Response.json(deleteRule(b.id));
   if (b.action === "toggle_rule") return Response.json(setRuleActive(b.id, b.active));
+
+  // Build each age bracket on its own, in one call.
+  //
+  // A league is not one pool. Building 217 players into 22 teams mixes a
+  // five-year-old with a fifteen-year-old and calls it balanced. Divisions
+  // exist precisely so that doesn't happen, so this is the default the UI
+  // offers: one balanced set of teams per bracket, names prefixed with the
+  // bracket ("Ages 9-10 / Team 1") so they can't collide.
+  if (b.action === "preview" && b.per_division) {
+    const all = getRecords("player").map((r) => ({ id: r.id, name: r.name, ...parse(r.data) }))
+      .filter((p) => inSeason(p, season));
+    const inLeague = b.league
+      ? all.filter((p) => (p.league || "") === b.league || (p.second_league || "") === b.league)
+      : all;
+    if (!inLeague.length) return Response.json({ total: 0, teams: [], slices: [] });
+
+    const lowSet = lowAvailabilitySet();
+    for (const p of inLeague) p._low = lowSet.has(p.id);
+    const allRules = getTeamRules();
+    const rules = allRules.filter((r) => r.active).map((r) => ({ type: r.type, field: r.field, max: r.max }));
+    const ccRule = allRules.find((r) => r.type === "coach_child");
+    const coachChild = ccRule ? !!ccRule.active : true;
+    const capRule = allRules.find((r) => r.type === "cap" && r.active) || null;
+    const capField = capRule ? capRule.field : null;
+    const coaches = getCoaches(b.league || null);
+    const links = linkData();
+
+    // A division with no league set applies to every league.
+    const brackets = getDivisions().filter((d) => !d.league || !b.league || d.league === b.league);
+    const slices = brackets.map((d) => ({ name: d.name, players: inLeague.filter((p) => (p.division || "") === d.name) }));
+    const noDiv = inLeague.filter((p) => !String(p.division || "").trim());
+    if (noDiv.length) slices.push({ name: "", players: noDiv, unsorted: true });
+
+    const outTeams = [], report = [], conflicts = [];
+    for (const sl of slices) {
+      if (!sl.players.length) { report.push({ division: sl.name || "(no division)", players: 0, teams: 0 }); continue; }
+      const r = buildTeams(sl.players, {
+        numTeams: null,                                    // per-bracket sizing, never one league-wide count
+        targetSize: b.targetSize ? Number(b.targetSize) : null,
+        rules, coaches, coachChild, links,
+      });
+      const prefix = sl.name ? `${sl.name} / ` : "No division / ";
+      for (const t of (r.teams || [])) {
+        outTeams.push({ ...t, name: prefix + t.name, division: sl.name || "" });
+      }
+      conflicts.push(...(r.conflicts || []));
+      report.push({ division: sl.name || "(no division)", players: sl.players.length, teams: (r.teams || []).length, unsorted: !!sl.unsorted });
+    }
+
+    const linkKindsByPlayer = new Map();
+    for (const g of listLinks()) {
+      for (const pid of g.players) {
+        const arr = linkKindsByPlayer.get(pid) || [];
+        if (!arr.find((x) => x.link_id === g.link_id)) arr.push({ link_id: g.link_id, kind: g.kind, reason: g.reason || "" });
+        linkKindsByPlayer.set(pid, arr);
+      }
+    }
+    return Response.json({
+      total: inLeague.length,
+      per_division: true,
+      slices: report,
+      balanceField: (outTeams[0] && outTeams[0].balanceField) || "age",
+      hasCoaches: coaches.length > 0,
+      cap: capRule ? { field: capField, max: Number(capRule.max) || null } : null,
+      linkConflicts: conflicts,
+      teams: outTeams.map((t) => ({
+        name: t.name, division: t.division, size: t.size, ageAvg: t.ageAvg, metricAvg: t.metricAvg, balanceField: t.balanceField,
+        players: t.players.map((p) => ({ id: p.id, name: p.name || p.full_name || `#${p.id}`, age: p.age, group: p.link_group || "", reason: p.link_reason || "", unit: p._u, star: capField ? !!p[capField] : false, pinned: !!p._pin, low: !!p._low, linkKinds: linkKindsByPlayer.get(p.id) || [] })),
+        coaches: (t.coaches || []).map((c) => ({ id: c.id, name: c.name, role: c.role })),
+      })),
+    });
+  }
 
   if (b.action === "preview") {
     const all = getRecords("player").map((r) => ({ id: r.id, name: r.name, ...parse(r.data) }))

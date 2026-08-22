@@ -1,4 +1,4 @@
-import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag } from "@/lib/tools.js";
+import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag, divisionOptions } from "@/lib/tools.js";
 import { bindRequest, getActor } from "@/lib/actor.js";
 import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 
@@ -52,7 +52,7 @@ export async function POST(req) {
     return Response.json({
       players, fields,
       leagues: [...new Set(players.map((p) => p.league).filter(Boolean))],
-      divisions: [...new Set(players.map((p) => p.division).filter(Boolean))],
+      divisions: divisionOptions(players.map((p) => p.division)),
     });
   }
 

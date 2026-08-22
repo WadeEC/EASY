@@ -1,5 +1,7 @@
 import { getFields, getRecords, getRecordsForSeason, getRecordsAll, applyCreateRecord, validateRecord, identityKey, findAmbiguousMatches, slug, writeMasterRow, coerceSelectValue, isKnownDivision } from "@/lib/tools.js";
 import { setScope, assertWritable } from "@/lib/season-scope.js";
+import { updateRecord, assignDivision } from "@/lib/tools.js";
+import { getRow } from "@/lib/db.js";
 import { bindRequest } from "@/lib/actor.js";
 import { coerceDate, isDateColumn } from "@/lib/import-helpers.js";
 
@@ -7,6 +9,35 @@ export const dynamic = "force-dynamic";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
 const hasVal = (v) => v != null && String(v).trim() !== "";
+
+// Fields the APP owns. A registration export knows a kid's phone number; it
+// does not know which team you put them on, whether their jersey was handed
+// over, or what a staff member wrote in the notes. A re-upload must never
+// reach into these — that's how a re-import quietly undoes a Saturday's work.
+const APP_OWNED = new Set([
+  "team", "division", "division_source", "season",
+  "jersey_issued", "size_confirmed_at", "size_confirmed_by",
+  "press_override", "press_override_reason", "press_override_by", "press_override_at",
+  "key_tag", "notes", "link_group", "link_reason",
+  "end_season_rank", "rank_season", "rank_history", "all_star",
+]);
+
+// What changed between what's on file and what the new sheet says.
+//
+// Only fields the sheet actually carried a value for. A column that isn't in
+// this export, or a cell left blank, means "no news" — never "delete what you
+// had". Clearing a value stays a deliberate edit someone makes by hand.
+function changedFields(existing, incoming) {
+  const patch = {};
+  for (const [k, v] of Object.entries(incoming)) {
+    if (APP_OWNED.has(k)) continue;
+    if (!hasVal(v)) continue;
+    const before = existing[k];
+    if (String(before == null ? "" : before).trim() === String(v).trim()) continue;
+    patch[k] = v;
+  }
+  return patch;
+}
 const divisionOk = (v) => { try { return isKnownDivision(v); } catch { return true; } };
 
 // Body: {
@@ -31,6 +62,15 @@ export async function POST(req) {
   const sourceFile = b.sourceFile || b.filename || null;
   const rows = b.rows || [];
   const allowAmbiguous = new Set((b.allowAmbiguous || []).map((n) => Number(n)));
+  // { rowIndex: existingPlayerId } — the user looked at an ambiguous row and
+  // said "that's the same person". A changed phone number is exactly this
+  // case: the strict identity no longer matches, so it can't be resolved
+  // automatically, but it's obviously the same kid to whoever is looking.
+  const updateInto = {};
+  for (const [k, v] of Object.entries(b.updateInto || {})) {
+    const rowIdx = Number(k), pid = Number(v);
+    if (rowIdx && pid) updateInto[rowIdx] = pid;
+  }
 
   // Index existing strict identity keys → record (for the "recognized" list).
   // Season scoping: when this import targets a season, records that carry a
@@ -53,8 +93,13 @@ export async function POST(req) {
   }
   const seenKeys = new Set(existingByKey.keys());
 
+  // Default ON: a re-upload of the same roster is almost always a refresh.
+  // Pass refresh:false to import as strictly additive.
+  const refresh = b.refresh !== false;
   let added = 0;
+  let updated = 0;
   const addedNames = [];
+  const updatedNames = [];
   const recognizedNames = [];
   const ambiguous = [];
   const skipped = [];
@@ -111,11 +156,61 @@ export async function POST(req) {
     const displayName = data.full_name || data.name || `(row ${n + 1})`;
     const key = identityKey(data);
 
+    // Refresh one existing record from this row. Shared by the exact-match
+    // path below and the "same person" answer to an ambiguous row.
+    function refreshInto(pid) {
+      const row0 = getRow("records", pid);
+      const before = row0 ? parse(row0.data) : null;
+      if (!before) return { error: `no record #${pid}` };
+      const patch = changedFields(before, data);
+      if (hasVal(patch.age)) {
+        const dv = assignDivision({ ...before, ...patch });
+        if (dv && dv !== (before.division || "")) patch.division = dv;
+      }
+      if (!Object.keys(patch).length) return { changes: [] };
+      const res = updateRecord(pid, patch, "user(import refresh)", `updated from ${sourceFile || "a re-upload"}`);
+      if (res && res.error) return { error: res.error };
+      return {
+        changes: Object.keys(patch).map((k) => ({
+          field: k,
+          from: before[k] == null || before[k] === "" ? null : String(before[k]),
+          to: String(patch[k]),
+        })),
+      };
+    }
+
+    // 0) The user told us who this is. Refresh them and move on.
+    if (updateInto[n + 1]) {
+      const pid = updateInto[n + 1];
+      const r = refreshInto(pid);
+      if (r.error) { skipped.push(`Row ${n + 1} (${displayName}): ${r.error}`); return; }
+      if (r.changes.length) {
+        updated++;
+        updatedNames.push({ id: pid, name: displayName, rowIndex: n + 1, changes: r.changes });
+      }
+      recognizedNames.push({ id: pid, name: displayName, rowIndex: n + 1, updated: r.changes.length, changes: r.changes, merged: true });
+      try { writeMasterRow({ record_type: rtype, source_file: sourceFile, source_district: source, source_league: data.league || null, season, identity_key: key, status: r.changes.length ? "updated" : "recognized", player_id: pid, raw_data: row }); } catch {}
+      return;
+    }
+
     // 1) Exact identity match → already in the system. Don't re-create.
     if (key && seenKeys.has(key)) {
       const hit = existingByKey.get(key) || {};
-      recognizedNames.push({ id: hit.id || null, name: displayName, rowIndex: n + 1 });
-      try { writeMasterRow({ record_type: rtype, source_file: sourceFile, source_district: source, source_league: data.league || null, season, identity_key: key, status: "recognized", player_id: hit.id || null, raw_data: row }); } catch {}
+      // Already here — but the sheet may be newer than the record. A phone
+      // number changes, a jersey size gets filled in, an age ticks over. Update
+      // what the sheet actually says and leave everything else alone.
+      let changed = null;
+      if (refresh && hit.id) {
+        const r = refreshInto(hit.id);
+        if (r.error) skipped.push(`Row ${n + 1} (${displayName}): ${r.error}`);
+        else if (r.changes.length) {
+          updated++;
+          changed = r.changes;
+          updatedNames.push({ id: hit.id, name: displayName, rowIndex: n + 1, changes: changed });
+        }
+      }
+      recognizedNames.push({ id: hit.id || null, name: displayName, rowIndex: n + 1, updated: changed ? changed.length : 0, changes: changed || [] });
+      try { writeMasterRow({ record_type: rtype, source_file: sourceFile, source_district: source, source_league: data.league || null, season, identity_key: key, status: changed ? "updated" : "recognized", player_id: hit.id || null, raw_data: row }); } catch {}
       return;
     }
 
@@ -180,6 +275,9 @@ export async function POST(req) {
     duplicates: recognizedNames.length, // back-compat for older clients
     recognized: recognizedNames.length,
     recognizedNames,
+    updated,          // people already here whose details the sheet changed
+    updatedNames,     // …and exactly what changed on each
+    refresh,
     ambiguous,
     skipped,
     unmatched, // free-text select values we couldn't auto-coerce; field was left blank

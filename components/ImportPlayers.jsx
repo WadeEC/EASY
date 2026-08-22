@@ -16,6 +16,7 @@ export default function ImportPlayers({ onDone, go }) {
   const [flash, setFlash] = useState(null);
   const [season, setSeason] = useState("");        // which season this upload is for
   const [seasonOpts, setSeasonOpts] = useState([]);
+  const [refresh, setRefresh] = useState(true);    // refresh people already here from this sheet
 
   async function load() {
     const full = await api.schema();
@@ -44,6 +45,7 @@ export default function ImportPlayers({ onDone, go }) {
   let twpOpts = [];
   try { twpOpts = twp && twp.options ? JSON.parse(twp.options) : []; } catch {}
 
+  // A re-upload of the same roster refreshes changed details by default.
   async function onFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -100,9 +102,11 @@ export default function ImportPlayers({ onDone, go }) {
   }
 
   async function doImport() {
-    const res = await api.importRows({ type: "player", rows, mapping, source: source || null, season: season || null, sourceFile: filename });
+    const res = await api.importRows({ type: "player", rows, mapping, source: source || null, season: season || null, sourceFile: filename, refresh });
     const bits = [`Imported ${res.added}.`];
-    if (res.recognized || res.duplicates) bits.push(`${res.recognized || res.duplicates} already in system.`);
+    if (res.updated) bits.push(`${res.updated} already here and updated from this sheet.`);
+    const unchanged = (res.recognized || res.duplicates || 0) - (res.updated || 0);
+    if (unchanged > 0) bits.push(`${unchanged} already in system, unchanged.`);
     if (res.ambiguous?.length) bits.push(`${res.ambiguous.length} need review on the Players page.`);
     if (res.skipped?.length) bits.push(`${res.skipped.length} had problems.`);
     setFlash({ ok: true, text: bits.join(" ") });
@@ -158,6 +162,17 @@ export default function ImportPlayers({ onDone, go }) {
               </div>
             ))}
           </div>
+          <label className="small" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14 }}>
+            <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={refresh} onChange={(e) => setRefresh(e.target.checked)} />
+            <span>
+              <b>Update people who are already here</b>
+              <div className="muted small">
+                Refreshes details this sheet has changed — a new phone number, a corrected age, a jersey size
+                that was blank. Blank cells are left alone, and teams, jerseys, notes and check-in history are
+                never touched. Untick to add new people only.
+              </div>
+            </span>
+          </label>
           <div className="btn-row" style={{ marginTop: 16 }}>
             <button className="btn primary" onClick={doImport}>Import {rows.length} players</button>
           </div>

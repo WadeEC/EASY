@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api.js";
+import { divisionChoices } from "@/lib/ui.js";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
 
@@ -8,6 +9,7 @@ const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; 
 // (FR-2.10) as the skill input the next season so teams stay balanced.
 export default function RankingsPage({ go }) {
   const [players, setPlayers] = useState(undefined);   // array of {id,name,rank,team,division,league,season}
+  const [divRecs, setDivRecs] = useState([]);          // the defined age brackets
   const [status, setStatus] = useState({ ranked: 0, total: 0, balanceOn: false, season: "" });
   const [league, setLeague] = useState("");
   const [division, setDivision] = useState("");
@@ -32,6 +34,10 @@ export default function RankingsPage({ go }) {
       const d = parse(x.data);
       return { id: x.id, name: x.name || d.full_name || `#${x.id}`, rank: Number(d.end_season_rank) || 0, team: d.team || "", division: d.division || "", league: d.league || "", season: d.rank_season || "" };
     }));
+    try {
+      const dv = await api.records("division");
+      setDivRecs((dv.records || []).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.name || `#${x.id}`, league: d.league || "", age_min: d.age_min, age_max: d.age_max }; }));
+    } catch { setDivRecs([]); }
     try { const s = await api.rankingStatus(); if (s && !s.error) { setStatus(s); if (s.season && !seasonLabel) setSeasonLabel(s.season); } } catch {}
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
@@ -54,7 +60,8 @@ export default function RankingsPage({ go }) {
   }
 
   const leagues = [...new Set(players.map((p) => p.league).filter(Boolean))].sort();
-  const divisions = [...new Set(players.filter((p) => !league || p.league === league).map((p) => p.division).filter(Boolean))].sort();
+  // Defined brackets, youngest first — not the distinct strings on players.
+  const divisions = divisionChoices(divRecs, league, players.filter((p) => !league || p.league === league).map((p) => p.division)).map((c) => c.value);
   const teams = [...new Set(players.filter((p) => (!league || p.league === league) && (!division || p.division === division)).map((p) => p.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const shown = players.filter((p) =>
     (!league || p.league === league) && (!division || p.division === division) && (!team || p.team === team) &&

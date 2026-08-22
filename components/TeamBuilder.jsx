@@ -1,6 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api.js";
+import { divisionChoices } from "@/lib/ui.js";
+
+// Sentinel for the Division picker: not a filter, a different build.
+const PER_DIVISION = "__each__";
 
 const avg = (a) => (a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : 0);
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -14,7 +18,8 @@ function groupsOf(players) {
 export default function TeamBuilder({ go, onAsk }) {
   const [cfg, setCfg] = useState(undefined);
   const [league, setLeague] = useState("");
-  const [division, setDivision] = useState("");
+  // Building per bracket is the sane default — a league is not one pool.
+  const [division, setDivision] = useState(PER_DIVISION);
   const [divisions, setDivisions] = useState([]);
   const [targetSize, setTargetSize] = useState(10);   // admin target roster size (recommended 8–12)
   const [numTeams, setNumTeams] = useState("");        // "" = auto from target size
@@ -30,6 +35,7 @@ export default function TeamBuilder({ go, onAsk }) {
 
   const [editTeams, setEditTeams] = useState(null); // editable preview
   const [linkConflicts, setLinkConflicts] = useState([]); // unresolved do-not-link pairs from the last preview
+  const [slices, setSlices] = useState([]);         // per-division build report from the last preview
   const [cap, setCap] = useState(null);             // all-star cap { field, max }
   const [over, setOver] = useState(-1);
   const [pending, setPending] = useState(null); // proposed move awaiting confirmation
@@ -85,15 +91,27 @@ export default function TeamBuilder({ go, onAsk }) {
 
   async function doPreview() {
     setBusy(true); setFlash(null);
-    const opts = { league: league || null, division: division || null, targetSize: Number(targetSize) || 10 };
-    if (numTeams) opts.numTeams = Number(numTeams);
+    const each = division === PER_DIVISION;
+    const opts = { league: league || null, targetSize: Number(targetSize) || 10 };
+    if (each) opts.per_division = true;
+    else {
+      opts.division = division || null;
+      if (numTeams) opts.numTeams = Number(numTeams);   // one count only makes sense for one pool
+    }
     const res = await api.teamsPreview(opts);
     setBusy(false);
     if (res.error) return setFlash({ ok: false, text: res.error });
     if (!res.total) { setEditTeams(null); setLinkConflicts([]); return setFlash({ ok: false, text: "No players in that league yet." }); }
     setCap(res.cap || null);
     const teams = res.teams || [];
-    setEditTeams(teams.map((t) => ({ name: t.name, players: t.players, coaches: t.coaches || [] })));
+    if (!teams.length) {
+      setEditTeams(null); setLinkConflicts([]); setSlices([]);
+      return setFlash({ ok: false, text: each
+        ? "Nobody is sorted into a division yet, so there's nothing to build per bracket. Set up divisions under Season → Divisions, or re-sort players into their age bracket from the Players page."
+        : "No players in that division." });
+    }
+    setSlices(res.slices || []);
+    setEditTeams(teams.map((t) => ({ name: t.name, division: t.division || "", players: t.players, coaches: t.coaches || [] })));
     setLinkConflicts(res.linkConflicts || []);
     setSaved(false);
   }
@@ -185,7 +203,16 @@ export default function TeamBuilder({ go, onAsk }) {
     return moves;
   }
 
-  const scope = division ? players.filter((p) => (p.division || "") === division) : players;
+  // "Each division" is not a filter — it's a different build. Sizing shown for
+  // it is per-bracket, so the team-count buttons describe the largest bracket
+  // rather than pretending 217 kids go into one pool.
+  const perDivision = division === PER_DIVISION;
+  const divOpts = divisionChoices(divisions, league, players.map((p) => p.division));
+  const scope = (division && !perDivision) ? players.filter((p) => (p.division || "") === division) : players;
+  const perDivCounts = perDivision
+    ? divOpts.map((o) => ({ name: o.value, n: players.filter((p) => (p.division || "") === o.value).length })).filter((x) => x.n)
+    : [];
+  const noDivCount = perDivision ? players.filter((p) => !String(p.division || "").trim()).length : 0;
   const evenCount = (n, target) => { let c = Math.max(2, Math.round(n / (target || 10)) || 2); if (c % 2) c++; return c; };
   const autoTeams = evenCount(scope.length, Number(targetSize) || 10);
   const teamOptions = [...new Set([Math.max(2, autoTeams - 2), autoTeams, autoTeams + 2])].filter((c) => c >= 2 && c <= Math.max(2, scope.length || 2));
@@ -280,23 +307,51 @@ export default function TeamBuilder({ go, onAsk }) {
           <div>
             <label className="fld">Division</label>
             <select value={division} onChange={(e) => { setDivision(e.target.value); setNumTeams(""); setEditTeams(null); setSaved(false); }}>
-              <option value="">(all divisions)</option>
-              {divisions.filter((d) => !league || d.league === league).map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
+              <option value={PER_DIVISION}>Each division separately (recommended)</option>
+              <option value="">Everyone together, ignore divisions</option>
+              {divOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
         </div>
 
-        <label className="fld" style={{ marginTop: 12 }}>How should we split {scope.length ? `these ${scope.length}` : "the"} players into teams?</label>
-        <div className="btn-row" style={{ flexWrap: "wrap" }}>
-          {teamOptions.map((c) => (
-            <button key={c} className={"btn" + (selectedTeams === c ? " primary" : "")} onClick={() => setNumTeams(c)}>
-              {c} teams <span style={{ opacity: 0.7 }}>· ~{Math.max(1, Math.round((scope.length || 0) / c))} each</span>
-            </button>
-          ))}
-          <button className="btn ghost sm" onClick={() => setAdvanced((a) => !a)}>{advanced ? "Hide size options" : "More options"}</button>
-        </div>
+        {perDivision ? (
+          <>
+            <label className="fld" style={{ marginTop: 12 }}>
+              Each bracket gets its own balanced set of teams, aiming for {Number(targetSize) || 10} per team.
+            </label>
+            {perDivCounts.length ? (
+              <div className="btn-row" style={{ flexWrap: "wrap" }}>
+                {perDivCounts.map((d) => (
+                  <span key={d.name} className="chip">{d.name} · {d.n} → ~{Math.max(1, Math.round(d.n / (Number(targetSize) || 10)))} teams</span>
+                ))}
+                {noDivCount > 0 && <span className="chip" style={{ background: "rgba(220,150,30,.14)", color: "#a36800" }}>No division · {noDivCount}</span>}
+              </div>
+            ) : (
+              <div className="note warn" style={{ marginTop: 4 }}>
+                Nobody in {league || "this season"} is in a division yet. Set the age brackets up under
+                Season → Divisions, then use <b>Re-sort into brackets</b> on the Players page.
+              </div>
+            )}
+            <div className="btn-row" style={{ marginTop: 8 }}>
+              <button className="btn ghost sm" onClick={() => setAdvanced((a) => !a)}>{advanced ? "Hide size options" : "More options"}</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <label className="fld" style={{ marginTop: 12 }}>How should we split {scope.length ? `these ${scope.length}` : "the"} players into teams?</label>
+            <div className="btn-row" style={{ flexWrap: "wrap" }}>
+              {teamOptions.map((c) => (
+                <button key={c} className={"btn" + (selectedTeams === c ? " primary" : "")} onClick={() => setNumTeams(c)}>
+                  {c} teams <span style={{ opacity: 0.7 }}>· ~{Math.max(1, Math.round((scope.length || 0) / c))} each</span>
+                </button>
+              ))}
+              <button className="btn ghost sm" onClick={() => setAdvanced((a) => !a)}>{advanced ? "Hide size options" : "More options"}</button>
+            </div>
+          </>
+        )}
         <div className="muted small" style={{ marginTop: 8 }}>
           Aim for 8–12 per team. Siblings and linked players stay together, each coach’s child stays with their coach, and all-stars are spread evenly.
+          {!perDivision && division === "" && " Building everyone together mixes ages across brackets — pick “Each division separately” unless you mean to."}
         </div>
 
         {advanced && (

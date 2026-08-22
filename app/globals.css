@@ -208,6 +208,10 @@ pre.diff .add{color:#9be58b}.pre .del{color:#ff9a9a}
 .team-col{transition:transform .12s,box-shadow .12s,border-color .12s;border-top:3px solid var(--brand);padding:15px 15px 14px;display:flex;flex-direction:column}
 .team-col:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
 .team-col.over{outline:2px dashed var(--brand);outline-offset:3px;background:var(--brand-soft)}
+/* Players who aren't on a team yet still get a column — attendance is about a
+   person, not a roster, and week one happens before the teams do. Muted top
+   border so it reads as a holding pen rather than a real team. */
+.team-col.no-team{border-top-color:var(--line)}
 .team-col>.between h3{font-size:1.16rem;letter-spacing:-.01em}
 .team-col .stack{counter-reset:pl;gap:7px;margin-top:10px}
 .drag-item{cursor:grab;display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:13.5px;transition:border-color .12s,box-shadow .12s,background .12s}

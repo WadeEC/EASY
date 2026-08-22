@@ -142,25 +142,55 @@ export default function Board({ go }) {
 
   if (data === undefined) return <div className="muted">Loading…</div>;
 
-  // build team units: key = league||team ; group by league or dominant division
+  // Build the columns. Teams are the usual case — but attendance is a record
+  // about a PERSON, not about a roster, and the first weeks of a season happen
+  // before the teams exist. This board used to drop everyone without a team,
+  // so on week one it was empty and there was nothing to check in.
+  //
+  // Now players with no team get a column of their own, one per division, and
+  // check in exactly the same way. When the teams are built they simply move
+  // into their team's column.
+  const NO_TEAM = "Not on a team yet";
   const units = {};
   for (const p of data.players) {
-    if (!p.team) continue;
-    const key = (p.league || "") + "||" + p.team;
-    (units[key] = units[key] || { league: p.league || "", team: p.team, players: [] }).players.push(p);
+    const noTeam = !p.team;
+    const key = (p.league || "") + "||" + (noTeam ? `${NO_TEAM}::${p.division || ""}` : p.team);
+    (units[key] = units[key] || {
+      league: p.league || "",
+      team: noTeam ? NO_TEAM : p.team,
+      noTeam,
+      division: noTeam ? (p.division || "") : undefined,
+      players: [],
+    }).players.push(p);
   }
   const unitList = Object.values(units).map((u) => {
+    if (u.noTeam) return u;                       // its division is already exact
     const counts = {};
     u.players.forEach((p) => { const d = p.division || "—"; counts[d] = (counts[d] || 0) + 1; });
     u.division = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
     return u;
   });
-  const divOptions = [...new Set(unitList.filter((u) => !league || u.league === league).map((u) => u.division).filter(Boolean))].sort();
+  const teamCount = unitList.filter((u) => !u.noTeam).length;
+  const noTeamCount = unitList.filter((u) => u.noTeam).reduce((n, u) => n + u.players.length, 0);
+  // The server hands back the DEFINED brackets in age order (plus any stray
+  // value still sitting on a record). Sorting the distinct values found on
+  // teams is what filled this picker with "10, 11, 12, 4, 5, 7, 9" — those are
+  // ages, sorted as text.
+  const inPlay = new Set(unitList.filter((u) => !league || u.league === league).map((u) => u.division).filter(Boolean));
+  const divOptions = (data.divisions || []).filter((d) => inPlay.has(d));
+  for (const d of inPlay) if (!divOptions.includes(d)) divOptions.push(d);
   const filtered = unitList.filter((u) => (!league || u.league === league) && (!division || u.division === division));
   const groupKey = (u) => (league ? (u.division || "No division") : (u.league || "No league"));
   const groups = {};
   for (const u of filtered) (groups[groupKey(u)] = groups[groupKey(u)] || []).push(u);
-  const groupNames = Object.keys(groups).sort();
+  // Bracket order when grouping by division; alphabetical otherwise.
+  const divRank = new Map((data.divisions || []).map((d, i) => [d, i]));
+  const groupNames = Object.keys(groups).sort((a, b) => {
+    if (!league) return a.localeCompare(b);
+    const ra = divRank.has(a) ? divRank.get(a) : 9999;
+    const rb = divRank.has(b) ? divRank.get(b) : 9999;
+    return ra - rb || a.localeCompare(b, undefined, { numeric: true });
+  });
 
   // Live type-ahead for the check-in box — matches as you type (name or key
   // tag), best matches first. Enter checks in the top match; clicking a row
@@ -205,7 +235,9 @@ export default function Board({ go }) {
                 </select>
               </div>
               <div>
-                <label className="fld">Division{league ? "" : " (pick a league first)"}</label>
+                {/* Divisions come from the brackets you defined, so this works
+                    with or without a league picked, and with or without teams. */}
+                <label className="fld">Division</label>
                 <select value={division} onChange={(e) => setDivision(e.target.value)}>
                   <option value="">All divisions</option>
                   {divOptions.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -221,7 +253,14 @@ export default function Board({ go }) {
               </div>
             </div>
             <div className="muted small" style={{ marginTop: 8 }}>
-              Week of {fmtDate(week)} · {filtered.length} team{filtered.length !== 1 ? "s" : ""} shown · <i>Kiosk uses this same week.</i>
+              Week of {fmtDate(week)} · {(() => {
+                const t = filtered.filter((u) => !u.noTeam).length;
+                const n = filtered.filter((u) => u.noTeam).reduce((a, u) => a + u.players.length, 0);
+                const bits = [];
+                if (t) bits.push(`${t} team${t === 1 ? "" : "s"}`);
+                if (n) bits.push(`${n} not on a team`);
+                return bits.length ? bits.join(" · ") : "nobody";
+              })()} shown · <i>Kiosk uses this same week.</i>
             </div>
             <div className="addbar" style={{ marginTop: 12 }}>
               <input ref={scanRef} placeholder="Scan or type a name / ID to check in…" value={scanQ}
@@ -264,22 +303,30 @@ export default function Board({ go }) {
             <span><span className="sdot ok" /> all clear</span>
             <span><span className="sdot bad" /> needs attention — jersey size, alerts, jersey not issued</span>
             <span>· click a player for details · use Check in to mark them present</span>
+            <span>· teams are optional — pick a league (and a division) and check people in</span>
           </div>
 
-          {!unitList.length && <div className="card"><p className="muted" style={{ margin: 0 }}>No saved teams yet. Build teams first.</p></div>}
-          {unitList.length > 0 && filtered.length === 0 && <div className="card"><p className="muted" style={{ margin: 0 }}>No teams match this filter.</p></div>}
+          {!unitList.length && <div className="card"><p className="muted" style={{ margin: 0 }}>No players in this season yet.</p></div>}
+          {unitList.length > 0 && filtered.length === 0 && <div className="card"><p className="muted" style={{ margin: 0 }}>Nothing matches this filter.</p></div>}
+          {noTeamCount > 0 && (
+            <div className="muted small" style={{ margin: "10px 2px 0" }}>
+              {teamCount === 0
+                ? `No teams built yet — check people in from the columns below, or scan them above. Attendance belongs to the player, so it carries over once the teams exist.`
+                : `${noTeamCount} player${noTeamCount === 1 ? " has" : "s have"} no team yet — they're in their own column and check in the same way.`}
+            </div>
+          )}
 
           {groupNames.map((gname) => (
             <div key={gname} style={{ marginTop: 18 }}>
               <h2 style={{ margin: "0 2px 10px" }}>{gname}</h2>
               <div className="team-grid">
-                {groups[gname].sort((a, b) => a.team.localeCompare(b.team, undefined, { numeric: true })).map((u) => (
-                  <div className="card team-col" key={u.league + u.team}>
+                {groups[gname].sort((a, b) => (a.noTeam ? 1 : 0) - (b.noTeam ? 1 : 0) || a.team.localeCompare(b.team, undefined, { numeric: true })).map((u) => (
+                  <div className={"card team-col" + (u.noTeam ? " no-team" : "")} key={u.league + u.team + (u.division || "")}>
                     <div className="between">
                       <h3 style={{ margin: 0 }}>{u.team}</h3>
                       <span className="chip">{u.players.filter((p) => p.present).length}/{u.players.length} in</span>
                     </div>
-                    <div className="muted small" style={{ marginBottom: 6 }}>{[u.league, u.division].filter(Boolean).join(" · ")}</div>
+                    <div className="muted small" style={{ marginBottom: 6 }}>{[u.league, u.division || (u.noTeam ? "no division" : "")].filter(Boolean).join(" · ")}</div>
                     <div className="stack">
                       {u.players.map((p) => (
                         <div className={"drag-item" + (p.present ? " in" : "")} key={p.id}
