@@ -15,7 +15,11 @@ export default function Board({ go }) {
   // on mount. Changing the picker writes back so the kiosk picks it up.
   const defaultWeek = toISO(weekStart(new Date()));
   const [week, setWeek] = useState(defaultWeek);
-  const [weekChoices, setWeekChoices] = useState([defaultWeek]); // populated from /api/state
+  // The season's weeks, named and numbered by the server: numbering counts the
+  // weeks that actually HAPPEN, so a cancelled Saturday gives up its number and
+  // everything after it moves up. Any name can be overridden.
+  const [weekList, setWeekList] = useState([{ week: defaultWeek, date: defaultWeek, label: "Week 1", index: 1, current: true, planned: true }]);
+  const [renaming, setRenaming] = useState(null);   // { week, label }
   const [league, setLeague] = useState("");
   const [division, setDivision] = useState("");
   const [data, setData] = useState(undefined);
@@ -69,7 +73,7 @@ export default function Board({ go }) {
       try {
         const s = await api.activeWeekGet();
         if (s && s.week) setWeek(s.week);
-        if (s && Array.isArray(s.weeks) && s.weeks.length) setWeekChoices(s.weeks);
+        if (s && Array.isArray(s.weekList) && s.weekList.length) setWeekList(s.weekList);
       } catch {}
     })();
     scanRef.current?.focus();
@@ -100,6 +104,30 @@ export default function Board({ go }) {
     };
     // eslint-disable-next-line
   }, [week]);
+
+  async function refreshWeeks(res) {
+    if (res && Array.isArray(res.weeks) && res.weeks.length && typeof res.weeks[0] === "object") setWeekList(res.weeks);
+    else { try { const s = await api.activeWeekGet(); if (s?.weekList?.length) setWeekList(s.weekList); } catch {} }
+  }
+  async function saveWeekName() {
+    if (!renaming) return;
+    const res = await api.weekRename(renaming.week, renaming.label);
+    setRenaming(null);
+    if (res && res.error) return setFlash({ ok: false, text: res.error });
+    await refreshWeeks(res);
+  }
+  async function toggleWeekCancelled(w) {
+    const info = weekList.find((x) => x.week === w);
+    const res = await api.weekCancel(w, !info?.cancelled);
+    if (res && res.error) return setFlash({ ok: false, text: res.error });
+    await refreshWeeks(res);
+    setFlash({
+      ok: true,
+      text: info?.cancelled
+        ? `${fmtDate(info.date)} is back on — the weeks after it move down one.`
+        : `${fmtDate(info?.date || w)} cancelled — it gives up its number and the weeks after it move up one.`,
+    });
+  }
 
   async function changeWeek(w) {
     setWeek(w);
@@ -251,14 +279,47 @@ export default function Board({ go }) {
               <div>
                 <label className="fld">Week</label>
                 <select value={week} onChange={(e) => changeWeek(e.target.value)} title="Active check-in week — the kiosk uses this too">
-                  {weekChoices.map((w) => (
-                    <option key={w} value={w}>{fmtDate(w)}{w === defaultWeek ? " (this week)" : ""}</option>
+                  {weekList.map((w) => (
+                    <option key={w.week} value={w.week}>
+                      {w.label} · {fmtDate(w.date)}{w.current ? " (this week)" : ""}{w.cancelled ? " — cancelled" : ""}
+                    </option>
                   ))}
                 </select>
               </div>
+              <div style={{ alignSelf: "flex-end" }}>
+                <div className="btn-row" style={{ gap: 6 }}>
+                  <button className="btn ghost sm"
+                    onClick={() => { const w = weekList.find((x) => x.week === week); setRenaming({ week, label: w?.named ? w.label : "" }); }}
+                    title="Name this week — Jamboree, Week 0, Picture Day">Rename</button>
+                  <button className="btn ghost sm" onClick={() => toggleWeekCancelled(week)}
+                    title="A cancelled week gives up its number; the weeks after it move up">
+                    {weekList.find((x) => x.week === week)?.cancelled ? "Un-cancel" : "Cancel week"}
+                  </button>
+                </div>
+              </div>
             </div>
+            {renaming && (
+              <div className="card" style={{ marginTop: 10, padding: "10px 12px" }}>
+                <label className="fld">Name for {fmtDate(weekList.find((x) => x.week === renaming.week)?.date || renaming.week)}</label>
+                <div className="addbar">
+                  <input autoFocus value={renaming.label} placeholder="e.g. Jamboree, Picture Day — blank restores Week N"
+                    onChange={(e) => setRenaming({ ...renaming, label: e.target.value })}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveWeekName(); if (e.key === "Escape") setRenaming(null); }} />
+                  <button className="btn primary" onClick={saveWeekName}>Save</button>
+                  <button className="btn ghost" onClick={() => setRenaming(null)}>Cancel</button>
+                </div>
+                <div className="muted small" style={{ marginTop: 6 }}>
+                  Leave it blank to go back to the automatic number. Numbering counts the weeks that
+                  actually happen — cancel one and the next takes its number.
+                </div>
+              </div>
+            )}
             <div className="muted small" style={{ marginTop: 8 }}>
-              Week of {fmtDate(week)} · {(() => {
+              {(() => {
+                const w = weekList.find((x) => x.week === week);
+                if (!w) return `Week of ${fmtDate(week)}`;
+                return `${w.label} · ${fmtDate(w.date)}${w.cancelled ? " · cancelled" : ""}${w.planned ? " · no games scheduled yet" : ""}`;
+              })()} · {(() => {
                 const t = filtered.filter((u) => !u.noTeam).length;
                 const n = filtered.filter((u) => u.noTeam).reduce((a, u) => a + u.players.length, 0);
                 const bits = [];
