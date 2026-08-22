@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api.js";
-import { divisionChoices, resolveDivision } from "@/lib/ui.js";
+import { divisionChoices, resolveDivision, leagueChoices } from "@/lib/ui.js";
 import FieldInput from "./FieldInput.jsx";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -49,7 +49,7 @@ export default function TeamEditor({ go, onAsk }) {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   // Compute leagues/divisions before the early-return so the effects below can read them.
-  const leagues = [...new Set((players || []).map((p) => p.league).filter(Boolean))].sort();
+  const leagues = leagueChoices(fields, (players || []).map((p) => p.league));
   // Defined brackets first, youngest first. Anything on a player that isn't a
   // real bracket is still offered — otherwise those players are unreachable —
   // but flagged, because it needs cleaning up rather than picking.

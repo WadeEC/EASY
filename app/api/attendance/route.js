@@ -1,9 +1,9 @@
 import {
   getRecords, getFields, seedAttendance, getCheckins, setCheckin, updateRecord,
-  attendanceWeek, saveAttendanceWeek, attendanceWeeks, ATTENDANCE_STATUSES, divisionOptions, rosterOrder, divisionOf,} from "@/lib/tools.js";
+  attendanceWeek, saveAttendanceWeek, attendanceWeeks, ATTENDANCE_STATUSES, divisionOptions, rosterOrder, divisionOf, leagueOptions,} from "@/lib/tools.js";
 import { getRow, now, logAudit } from "@/lib/db.js";
 import { getActor, bindRequest } from "@/lib/actor.js";
-import { seasonFromReq, inSeason } from "@/lib/seasons.js";
+import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 import { emit } from "@/lib/event-bus.js";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export async function POST(req) {
     const checked = getCheckins(b.week);
     const fields = getFields("player").map((f) => ({ name: f.name, label: f.label, data_type: f.data_type, required: !!f.required, options: f.options }));
     const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: divisionOf(d), team: d.team || "", present: checked.has(r.id), data: d }; });
-    const leagues = [...new Set(all.map((p) => p.league).filter(Boolean))];
+    const leagues = leagueOptions(all.map((p) => p.league));
     // Defined brackets first, in age order — see divisionOptions.
     const divisions = divisionOptions(all.map((p) => p.division));
     const teams = [...new Set(all.map((p) => p.team).filter(Boolean))];
@@ -135,7 +135,7 @@ export async function POST(req) {
     const out = players.map((p) => { const set = byPlayer[p.id] || new Set(); return { ...p, present: weeks.map((w) => set.has(w)), count: set.size }; });
     return Response.json({
       weeks, players: out, totalWeeks: weeksSet.size,
-      leagues: [...new Set(all.map((p) => p.league).filter(Boolean))],
+      leagues: leagueOptions(all.map((p) => p.league)),
       divisions: divisionOptions(all.map((p) => p.division)),
       teams: [...new Set(all.map((p) => p.team).filter(Boolean))],
     });

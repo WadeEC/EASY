@@ -1,6 +1,6 @@
-import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag, divisionOptions, divisionOf,} from "@/lib/tools.js";
+import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag, divisionOptions, divisionOf, leagueOptions,} from "@/lib/tools.js";
 import { bindRequest, getActor } from "@/lib/actor.js";
-import { seasonFromReq, inSeason } from "@/lib/seasons.js";
+import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -51,7 +51,7 @@ export async function POST(req) {
     });
     return Response.json({
       players, fields,
-      leagues: [...new Set(players.map((p) => p.league).filter(Boolean))],
+      leagues: leagueOptions(players.map((p) => p.league)),
       divisions: divisionOptions(players.map((p) => p.division)),
     });
   }

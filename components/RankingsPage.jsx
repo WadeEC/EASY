@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api.js";
-import { divisionChoices, resolveDivision } from "@/lib/ui.js";
+import { divisionChoices, resolveDivision, leagueChoices } from "@/lib/ui.js";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
 
@@ -10,6 +10,7 @@ const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; 
 export default function RankingsPage({ go }) {
   const [players, setPlayers] = useState(undefined);   // array of {id,name,rank,team,division,league,season}
   const [divRecs, setDivRecs] = useState([]);          // the defined age brackets
+  const [pFields, setPFields] = useState([]);          // the player schema (for the league list)
   const [status, setStatus] = useState({ ranked: 0, total: 0, balanceOn: false, season: "" });
   const [league, setLeague] = useState("");
   const [division, setDivision] = useState("");
@@ -34,6 +35,7 @@ export default function RankingsPage({ go }) {
       const d = parse(x.data);
       return { id: x.id, name: x.name || d.full_name || `#${x.id}`, rank: Number(d.end_season_rank) || 0, team: d.team || "", division: d.division || "", age: d.age, league: d.league || "", season: d.rank_season || "" };
     }));
+    try { const sc = await api.schema("player"); setPFields(sc.fields || []); } catch { setPFields([]); }
     try {
       const dv = await api.records("division");
       setDivRecs((dv.records || []).map((x) => { const d = parse(x.data); return { id: x.id, name: x.name || d.name || `#${x.id}`, league: d.league || "", age_min: d.age_min, age_max: d.age_max }; }));
@@ -59,7 +61,7 @@ export default function RankingsPage({ go }) {
     if (res && !res.error) { setFlash({ ok: true, text: `Locked in ${res.finalized} rankings${seasonLabel ? ` for ${seasonLabel.trim()}` : ""}. They will balance next season's teams.` }); await load(); }
   }
 
-  const leagues = [...new Set(players.map((p) => p.league).filter(Boolean))].sort();
+  const leagues = leagueChoices(pFields, players.map((p) => p.league));
   // Defined brackets, youngest first — not the distinct strings on players.
   const divisions = divisionChoices(divRecs, league).map((c) => c.value);
   const divOf = (p) => resolveDivision(divRecs, p);

@@ -15,8 +15,8 @@
 //        → seat players who have no team onto the teams that already exist,
 //          without moving anyone who is already on one
 import { bindRequest } from "@/lib/actor.js";
-import { unassignedFor } from "@/lib/seasons.js";
-import { bulkMovePlayers, getDivisions, getLeagueLocks, reassignDivisions, placeUnassignedPlayers } from "@/lib/tools.js";
+import { unassignedFor, leaguesForSeason } from "@/lib/seasons.js";
+import { bulkMovePlayers, getDivisions, getLeagueLocks, reassignDivisions, placeUnassignedPlayers, leagueOptions } from "@/lib/tools.js";
 import { currentScope, scopeLabel } from "@/lib/season-scope.js";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +30,12 @@ export async function GET(req) {
     ...data,
     scope: scopeLabel(),
     divisions: getDivisions(),
+    // The configured leagues for this season — not the ones that happen to be
+    // set on a division record (divisions are usually league-wide, so that
+    // list was empty and the League picker had nothing in it).
+    leagues: leagueOptions(
+      (data.no_league || []).concat(data.no_division || [], data.no_team || []).map((p) => p.league),
+    ),
     locks: getLeagueLocks(),
   });
 }

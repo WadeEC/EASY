@@ -39,7 +39,9 @@ export default function Unassigned({ go, refresh, onAsk }) {
   const season = data.season || currentSeason();
   const list = data[bucket] || [];
   const active = BUCKETS.find((b) => b.key === bucket);
-  const leagues = [...new Set((data.divisions || []).map((d) => d.league).filter(Boolean))];
+  // Divisions are usually league-wide (no league set), so reading leagues off
+  // them produced an empty list. Use what the server reports for the season.
+  const leagues = data.leagues || [];
   const divisionsForLeague = (data.divisions || [])
     .filter((d) => !target.league || !d.league || d.league === target.league);
 
