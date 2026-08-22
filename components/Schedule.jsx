@@ -100,6 +100,8 @@ const refsOf = (g) => String(g.referee || "").split(",").map((s) => s.trim()).fi
 export default function Schedule({ go, onAsk, startRef }) {
   const [cfg, setCfg] = useState(undefined);
   const [tab, setTab] = useState("saved");
+  const [step, setStep] = useState(0);   // Build-schedule wizard position
+  const [blackoutCount, setBlackoutCount] = useState(null);  // shown on the Review step
   const [league, setLeague] = useState("");
   const [startDate, setStartDate] = useState("");
   const [weeksInput, setWeeksInput] = useState("");   // "" = auto (one full round-robin)
@@ -228,6 +230,17 @@ export default function Schedule({ go, onAsk, startRef }) {
     const locs = [...new Set(saved.map((g) => g.location).filter(Boolean))];
     if (locs.length) { setFieldList(locs); fieldsPrefilled.current = true; }
   }, [saved]);
+
+  // The Review step states how many blackouts are in play, so it has to know
+  // about additions made two steps earlier.
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try { const r = await api.blackoutsList(league || null); if (!dead) setBlackoutCount((r?.blackouts || []).length); }
+      catch { if (!dead) setBlackoutCount(null); }
+    })();
+    return () => { dead = true; };
+  }, [league, step]);
 
   if (cfg === undefined || cfg?.error) return <div className="muted">Loading…</div>;
 
@@ -414,124 +427,409 @@ export default function Schedule({ go, onAsk, startRef }) {
         <button className={"pill" + (tab === "scores" ? " active" : "")} onClick={() => setTab("scores")}>Scores</button>
       </div>
 
-      {tab === "build" && (
+      {tab === "build" && (() => {
+        // ---------------------------------------------------------------- steps
+        // Building a schedule is a sequence, not a form. The old layout put nine
+        // controls on screen at once with no hint which mattered first, so the
+        // usual outcome was filling everything in, pressing Generate, and being
+        // told a field was missing. Now it asks one thing at a time, in the
+        // order the answers actually depend on each other, and won't let you
+        // move on from a step that isn't answered.
+        const missingDivTimes = divisionsInBuild.filter((d) => !String(divisionStartTimes[d] || "").trim());
+        const needsDivTimes = divisionsInBuild.length > 0;
+
+        // The league is picked FIRST and gates everything after it. Fields,
+        // teams, divisions, blackouts and the schedule itself all belong to one
+        // league — deciding which one last meant every earlier answer was given
+        // against nothing in particular.
+        const haveLeague = !!league || noLeagues;
+
+        const STEPS = [
+          {
+            key: "league",
+            title: "League",
+            blurb: "Pick the league first — the fields, teams, divisions and blackouts that follow all belong to it.",
+            done: haveLeague,
+            blocker: "Pick a league.",
+          },
+          {
+            key: "fields",
+            title: "Fields",
+            blurb: `Where ${league || "this league"} plays. Games spread across these, and the conflict checker needs them to spot two teams booked on the same field at the same time.`,
+            done: haveLeague && fieldList.length > 0,
+            blocker: haveLeague ? "Add at least one field." : "Pick a league first.",
+          },
+          {
+            key: "teams",
+            title: "Teams",
+            blurb: `Who's playing in ${league || "this league"} this season.`,
+            done: haveLeague && allEffectiveTeams.length >= 2,
+            blocker: !haveLeague
+              ? "Pick a league first."
+              : "You need at least two teams — build teams first, or add a guest team.",
+          },
+          {
+            key: "dates",
+            title: "Dates",
+            blurb: "When the season starts and how long it runs.",
+            done: true,   // both are optional — blank start date and auto weeks are valid
+            blocker: "",
+          },
+          {
+            key: "gameday",
+            title: "Game day",
+            blurb: "How a single Saturday is laid out.",
+            done: needsDivTimes ? missingDivTimes.length === 0 : !!startTime,
+            blocker: needsDivTimes
+              ? `Set a first-game time for: ${missingDivTimes.join(", ")}.`
+              : "Set the first game time.",
+          },
+          {
+            key: "blackouts",
+            title: "Blackout dates",
+            blurb: "Weekends to skip — holidays, fields closed. The season jumps past them instead of counting them.",
+            done: true,   // having none is a perfectly good answer
+            blocker: "",
+          },
+          {
+            key: "review",
+            title: "Review & generate",
+            blurb: "",
+            done: false,
+            blocker: "",
+          },
+        ];
+
+        const idx = Math.min(step, STEPS.length - 1);
+        const cur = STEPS[idx];
+        const canAdvance = cur.done || cur.key === "review";
+        // Everything except the review step itself has to be answered before a
+        // schedule can be built — that's the same check the button used to do
+        // at the very end, just surfaced where you can act on it.
+        const firstUnfinished = STEPS.findIndex((st) => st.key !== "review" && !st.done);
+        const readyToBuild = firstUnfinished === -1;
+
+        const go2 = (n) => { setStep(Math.max(0, Math.min(STEPS.length - 1, n))); };
+
+        return (
         <>
-          <div className="card">
-            <div className="field-grid">
-              <LeaguePicker onChange={() => { setWeeks(null); setExcludedTeams(new Set()); setGuestTeams([]); }} />
-              <div>
-                <label className="fld">First game date (optional)</label>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-              </div>
-              <div>
-                <label className="fld">Weeks of games</label>
-                <input type="number" min={1} value={weeksInput}
-                  onChange={(e) => { setWeeksInput(e.target.value); setWeeks(null); }}
-                  placeholder={autoWeeks ? `auto — ${autoWeeks}` : "auto"} />
-                <div className="muted small" style={{ marginTop: 4, fontSize: 11 }}>
-                  Counts game weekends, not calendar weeks — blackouts are skipped, not counted.
-                </div>
-              </div>
-              <div>
-                <label className="fld">Games per team each day <span className="req">*</span></label>
-                <input
-                  type="number"
-                  min={1}
-                  required
-                  value={gamesPerDay}
-                  onChange={(e) => { setGamesPerDay(Math.max(1, Number(e.target.value) || 1)); setWeeks(null); }}
-                />
-                <div className="muted small" style={{ marginTop: 4, fontSize: 11 }}>
-                  Usually 1. Set 2+ for tournaments / pool play.
-                </div>
-              </div>
-              {!divisionsInBuild.length && (
-                <div>
-                  <label className="fld">First game time <span className="req">*</span></label>
-                  <input type="time" required value={startTime} onChange={(e) => { setStartTime(e.target.value); setWeeks(null); }} />
-                </div>
-              )}
-              <div>
-                <label className="fld">Minutes per game (slot length) <span className="req">*</span></label>
-                <input type="number" min={5} step={5} required value={slotMins}
-                  onChange={(e) => { setSlotMins(Math.max(0, Number(e.target.value) || 0)); setWeeks(null); }} />
-                <div className="muted small" style={{ marginTop: 4, fontSize: 11 }}>
-                  Each division needs <b>slot × games-per-day</b> of runway before the next division can kick off ({gamesPerDay > 1 ? `e.g. ${gamesPerDay} × ${slotMins || 60} = ${(gamesPerDay) * (slotMins || 60)} min` : "e.g. 1 × 60 = 60 min"}).
-                </div>
-              </div>
+          {/* -------------------------------------------------------- stepper */}
+          <div className="card" style={{ padding: "12px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {STEPS.map((st, i) => {
+                const active = i === idx;
+                const complete = st.done && i < idx;
+                return (
+                  <div key={st.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      onClick={() => go2(i)}
+                      title={st.done || i <= idx ? st.title : st.blocker}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        border: "1px solid " + (active ? "var(--brand, #c8102e)" : "var(--line, #e3e3e8)"),
+                        background: active ? "var(--brand, #c8102e)" : "transparent",
+                        color: active ? "#fff" : "var(--ink)",
+                        borderRadius: 999, padding: "6px 12px", cursor: "pointer",
+                        fontWeight: active ? 700 : 500, fontSize: 13, whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span style={{
+                        width: 20, height: 20, borderRadius: 999, flex: "0 0 20px",
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 11, fontWeight: 700,
+                        background: active ? "rgba(255,255,255,.25)" : complete ? "var(--good, #1a7f47)" : "var(--line-soft, #eee)",
+                        color: active ? "#fff" : complete ? "#fff" : "var(--muted, #777)",
+                      }}>{complete ? "✓" : i + 1}</span>
+                      {st.title}
+                    </button>
+                    {i < STEPS.length - 1 && <span aria-hidden style={{ color: "var(--line, #ccc)", fontSize: 16 }}>›</span>}
+                  </div>
+                );
+              })}
             </div>
-            {divisionsInBuild.length > 0 && (
-              <div style={{ marginTop: 14 }}>
-                <label className="fld">First game time per division <span className="req">*</span></label>
-                <div className="muted small" style={{ marginBottom: 6 }}>
-                  All divisions in this league play the same day, but each division kicks off at its own time. Required — one HH:MM per division.
+          </div>
+
+          {/* ----------------------------------------------------- step body */}
+          <div className="card">
+            <div className="between" style={{ alignItems: "flex-start", marginBottom: 4 }}>
+              <h2 style={{ margin: 0 }}>Step {idx + 1} of {STEPS.length} · {cur.title}</h2>
+              <span className="muted small">{league || (noLeagues ? "all teams" : "no league picked")}</span>
+            </div>
+            {cur.blurb && <p className="muted" style={{ marginTop: 0 }}>{cur.blurb}</p>}
+
+            {/* Nothing past step 1 means anything without a league. Rather than
+                showing empty controls that quietly do nothing, say so and offer
+                the way back. */}
+            {!haveLeague && cur.key !== "league" ? (
+              <div className="note warn">
+                Pick a league on step 1 first — fields, teams, divisions and blackouts all belong to one.
+                <button className="btn ghost sm" style={{ marginLeft: 8 }} onClick={() => go2(0)}>Go to step 1</button>
+              </div>
+            ) : (
+            <>
+
+            {/* 1 — League */}
+            {cur.key === "league" && (
+              <>
+                <div style={{ maxWidth: 340 }}>
+                  <LeaguePicker onChange={() => {
+                    // A different league means different fields, teams and
+                    // divisions — carrying the old answers forward would build
+                    // a schedule out of another league's parts.
+                    setWeeks(null);
+                    setExcludedTeams(new Set());
+                    setGuestTeams([]);
+                    setFieldList([]);
+                    setDivisionStartTimes({});
+                  }} />
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
-                  {divisionsInBuild.map((dv) => {
-                    const v = divisionStartTimes[dv] || "";
-                    const missing = !v.trim();
-                    return (
-                      <div key={dv}>
-                        <label className="fld" style={{ marginTop: 0 }}>{dv}{missing && <span className="req"> *</span>}</label>
-                        <input
-                          type="time"
-                          required
-                          value={v}
-                          onChange={(e) => { setDivisionStartTimes((s) => ({ ...s, [dv]: e.target.value })); setWeeks(null); }}
-                          style={{ borderColor: missing ? "var(--warn, #b40)" : undefined }}
-                        />
-                      </div>
-                    );
-                  })}
+                <div className="muted small" style={{ marginTop: 10 }}>
+                  {noLeagues
+                    ? "No leagues are set up, so this schedule covers every team."
+                    : league
+                      ? `${teamStats.length} team${teamStats.length === 1 ? "" : "s"} on the ${league} roster${divisionsInBuild.length ? ` across ${divisionsInBuild.length} division${divisionsInBuild.length === 1 ? "" : "s"}` : ""}.`
+                      : "Nothing else can be set until a league is chosen."}
+                </div>
+                {league && (
+                  <div className="muted small" style={{ marginTop: 6 }}>
+                    Changing this later clears the fields and team choices below — they belong to the league.
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* 2 — Fields */}
+            {cur.key === "fields" && (
+              <>
+                <div className="aibar">
+                  <input placeholder="Add a field — e.g. Field 1, North Park…" value={fieldText}
+                    autoFocus
+                    onChange={(e) => setFieldText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addFieldName(); }} />
+                  <button className="btn" onClick={addFieldName}>Add field</button>
+                </div>
+                {fieldList.length > 0 ? (
+                  <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap" }}>
+                    {fieldList.map((f) => (
+                      <span className="member" key={f}>{f}<button className="x" title="Remove" onClick={() => removeFieldName(f)}>×</button></span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="muted small" style={{ marginTop: 8 }}>Type a name and press Enter. Add one per field you actually play on.</div>
+                )}
+              </>
+            )}
+
+            {/* 3 — Teams */}
+            {cur.key === "teams" && (
+              <>
+                <div className="between" style={{ margin: "0 0 6px" }}>
+                  <span className="muted small">Pulled from the{league ? ` ${league}` : ""} roster — uncheck anyone you don&apos;t want this season, or add guest teams for tournament / cross-league play.</span>
+                  <span className="muted small">{allEffectiveTeams.length} included{guestTeams.length ? ` · ${guestTeams.length} guest` : ""}</span>
+                </div>
+
+                {teamStats.length ? (
+                  <div className="grid cols-2" style={{ marginTop: 6 }}>
+                    {teamStats.map((s) => {
+                      const checked = !excludedTeams.has(s.team);
+                      return (
+                        <label className="between" key={s.team} style={{ padding: "4px 6px", borderBottom: "1px solid var(--line-soft)" }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <input type="checkbox" checked={checked} onChange={(e) => {
+                              setWeeks(null);
+                              setExcludedTeams((prev) => { const n = new Set(prev); if (e.target.checked) n.delete(s.team); else n.add(s.team); return n; });
+                            }} />
+                            <b>{s.team}</b>
+                            <span className="muted small">· {s.players} player{s.players !== 1 ? "s" : ""}</span>
+                            {s.divisions.length ? <span className="muted small">· {s.divisions.join(", ")}</span> : null}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="muted small">No teams yet for{league ? ` ${league}` : " any league"}. <a onClick={() => go({ page: "teambuilder", tab: "build" })}>Build teams</a> first, or add a guest team below.</div>
+                )}
+
+                {guestTeams.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div className="muted small" style={{ marginBottom: 4 }}>Guest teams</div>
+                    <div style={{ display: "flex", flexWrap: "wrap" }}>
+                      {guestTeams.map((g) => (
+                        <span className="member" key={g}>{g}<button className="x" title="Remove" onClick={() => { setGuestTeams((p) => p.filter((x) => x !== g)); setWeeks(null); }}>×</button></span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="addbar" style={{ marginTop: 10 }}>
+                  <input placeholder="Add a guest team — e.g. PHX U10 Eagles" value={guestText}
+                    onChange={(e) => setGuestText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const v = guestText.trim();
+                        if (!v) return;
+                        setGuestTeams((prev) => prev.some((x) => x.toLowerCase() === v.toLowerCase()) ? prev : [...prev, v]);
+                        setGuestText(""); setWeeks(null);
+                      }
+                    }} />
+                  <button className="btn" onClick={() => {
+                    const v = guestText.trim(); if (!v) return;
+                    setGuestTeams((prev) => prev.some((x) => x.toLowerCase() === v.toLowerCase()) ? prev : [...prev, v]);
+                    setGuestText(""); setWeeks(null);
+                  }}>Add guest team</button>
+                </div>
+              </>
+            )}
+
+            {/* 3 — Dates */}
+            {cur.key === "dates" && (
+              <div className="field-grid">
+                <div>
+                  <label className="fld">First game date</label>
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                  <div className="muted small" style={{ marginTop: 4, fontSize: 11 }}>
+                    Optional — leave blank and weeks are numbered without dates.
+                  </div>
+                </div>
+                <div>
+                  <label className="fld">Weeks of games</label>
+                  <input type="number" min={1} value={weeksInput}
+                    onChange={(e) => { setWeeksInput(e.target.value); setWeeks(null); }}
+                    placeholder={autoWeeks ? `auto — ${autoWeeks}` : "auto"} />
+                  <div className="muted small" style={{ marginTop: 4, fontSize: 11 }}>
+                    Leave blank for one full round-robin{autoWeeks ? ` (${autoWeeks} week${autoWeeks !== 1 ? "s" : ""})` : ""}; set more to repeat the season.
+                    Counts game weekends, not calendar weeks — blackouts are skipped, not counted.
+                  </div>
                 </div>
               </div>
             )}
 
-            <div style={{ marginTop: 14 }}>
-              <label className="fld">Fields / locations <span className="req">*</span></label>
-              <div className="muted small" style={{ marginBottom: 6 }}>Required. Add the fields you play on — games spread across them, and the conflict checker needs them to flag two teams in the same place at the same time.</div>
-              <div className="aibar">
-                <input placeholder="Add a field — e.g. Field 1, North Park…" value={fieldText}
-                  onChange={(e) => setFieldText(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") addFieldName(); }} />
-                <button className="btn" onClick={addFieldName}>Add field</button>
-              </div>
-              {fieldList.length > 0 ? (
-                <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap" }}>
-                  {fieldList.map((f) => (
-                    <span className="member" key={f}>{f}<button className="x" title="Remove" onClick={() => removeFieldName(f)}>×</button></span>
+            {/* 4 — Game day */}
+            {cur.key === "gameday" && (
+              <>
+                <div className="field-grid">
+                  <div>
+                    <label className="fld">Games per team each day <span className="req">*</span></label>
+                    <input type="number" min={1} required value={gamesPerDay}
+                      onChange={(e) => { setGamesPerDay(Math.max(1, Number(e.target.value) || 1)); setWeeks(null); }} />
+                    <div className="muted small" style={{ marginTop: 4, fontSize: 11 }}>Usually 1. Set 2+ for tournaments / pool play.</div>
+                  </div>
+                  <div>
+                    <label className="fld">Minutes per game (slot length) <span className="req">*</span></label>
+                    <input type="number" min={5} step={5} required value={slotMins}
+                      onChange={(e) => { setSlotMins(Math.max(0, Number(e.target.value) || 0)); setWeeks(null); }} />
+                    <div className="muted small" style={{ marginTop: 4, fontSize: 11 }}>
+                      Each division needs <b>slot × games-per-day</b> of runway before the next division can kick off ({gamesPerDay > 1 ? `${gamesPerDay} × ${slotMins || 60} = ${(gamesPerDay) * (slotMins || 60)} min` : "1 × 60 = 60 min"}).
+                    </div>
+                  </div>
+                  {!needsDivTimes && (
+                    <div>
+                      <label className="fld">First game time <span className="req">*</span></label>
+                      <input type="time" required value={startTime} onChange={(e) => { setStartTime(e.target.value); setWeeks(null); }} />
+                    </div>
+                  )}
+                </div>
+
+                {needsDivTimes && (
+                  <div style={{ marginTop: 14 }}>
+                    <label className="fld">First game time per division <span className="req">*</span></label>
+                    <div className="muted small" style={{ marginBottom: 6 }}>
+                      All divisions in this league play the same day, but each kicks off at its own time. One HH:MM per division.
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
+                      {divisionsInBuild.map((dv) => {
+                        const v = divisionStartTimes[dv] || "";
+                        const missing = !v.trim();
+                        return (
+                          <div key={dv}>
+                            <label className="fld" style={{ marginTop: 0 }}>{dv}{missing && <span className="req"> *</span>}</label>
+                            <input type="time" required value={v}
+                              onChange={(e) => { setDivisionStartTimes((s2) => ({ ...s2, [dv]: e.target.value })); setWeeks(null); }}
+                              style={{ borderColor: missing ? "var(--warn, #b40)" : undefined }} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* 6 — Blackouts */}
+            {cur.key === "blackouts" && <BlackoutsCard league={league} bare />}
+
+            {/* 7 — Review */}
+            {cur.key === "review" && (
+              <>
+                <div className="stack" style={{ marginTop: 4, gap: 0 }}>
+                  {[
+                    ["League", league || (noLeagues ? "all teams" : "—"), 0],
+                    ["Fields", fieldList.join(", "), 1],
+                    ["Teams", `${allEffectiveTeams.length}${guestTeams.length ? ` (${guestTeams.length} guest)` : ""}`, 2],
+                    ["First game date", startDate || "not set", 3],
+                    ["Weeks", weeksInput || (autoWeeks ? `auto — ${autoWeeks}` : "auto"), 3],
+                    ["Games per team / day", String(gamesPerDay), 4],
+                    ["Slot length", `${slotMins} min`, 4],
+                    ["First game time", needsDivTimes
+                      ? divisionsInBuild.map((d) => `${d} ${divisionStartTimes[d] || "—"}`).join(" · ")
+                      : (startTime || "not set"), 4],
+                    ["Blackout dates", blackoutCount === null ? "—"
+                      : blackoutCount === 0 ? "none — the season runs straight through"
+                      : `${blackoutCount} date${blackoutCount === 1 ? "" : "s"} skipped`, 5],
+                  ].map(([label, value, jump]) => (
+                    <div key={label} className="between" style={{ padding: "8px 2px", borderBottom: "1px solid var(--line-soft)", gap: 12, alignItems: "flex-start" }}>
+                      <span style={{ minWidth: 0 }}>
+                        <span className="muted small">{label}</span><br />
+                        <b style={{ overflowWrap: "anywhere" }}>{value || "—"}</b>
+                      </span>
+                      <button className="btn ghost sm" style={{ flex: "0 0 auto" }} onClick={() => go2(jump)}>Change</button>
+                    </div>
                   ))}
                 </div>
+
+                {!readyToBuild && (
+                  <div className="note warn" style={{ marginTop: 12 }}>
+                    {STEPS[firstUnfinished].blocker}{" "}
+                    <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => go2(firstUnfinished)}>
+                      Go to step {firstUnfinished + 1}
+                    </button>
+                  </div>
+                )}
+
+                <div className="btn-row" style={{ marginTop: 14 }}>
+                  <button className="btn primary" onClick={doPreview} disabled={busy || !readyToBuild}>
+                    {busy ? "Building…" : "Generate schedule (preview)"}
+                  </button>
+                  {weeks && <button className="btn" onClick={doSave}>Save schedule</button>}
+                </div>
+                <div className="muted small" style={{ marginTop: 8 }}>
+                  Preview first — nothing is saved until you press Save schedule.
+                </div>
+              </>
+            )}
+
+            </>
+            )}
+
+            {/* ------------------------------------------------ back / next */}
+            <div className="between" style={{ marginTop: 20, paddingTop: 14, borderTop: "1px solid var(--line-soft)", flexWrap: "wrap", gap: 10 }}>
+              <button className="btn ghost" onClick={() => go2(idx - 1)} disabled={idx === 0}>← Back</button>
+              <span className="muted small" style={{ textAlign: "center", flex: "1 1 auto" }}>
+                {!canAdvance ? cur.blocker : idx < STEPS.length - 1 ? `Next: ${STEPS[idx + 1].title}` : ""}
+              </span>
+              {idx < STEPS.length - 1 ? (
+                <button className="btn primary" onClick={() => go2(idx + 1)} disabled={!canAdvance} title={canAdvance ? "" : cur.blocker}>
+                  Next →
+                </button>
               ) : (
-                <div className="muted small" style={{ marginTop: 6, color: "var(--warn, #b40)" }}>At least one field is required before generating.</div>
+                <span />
               )}
             </div>
-            {(() => {
-              const missingDivTimes = divisionsInBuild.filter((d) => !String(divisionStartTimes[d] || "").trim());
-              const blocked = !fieldList.length || (divisionsInBuild.length ? missingDivTimes.length > 0 : !startTime);
-              return (
-                <>
-                  <div className="muted small" style={{ marginTop: 12 }}>
-                    {allEffectiveTeams.length} team{allEffectiveTeams.length !== 1 ? "s" : ""} ready{fieldList.length ? ` · ${fieldList.length} field${fieldList.length !== 1 ? "s" : ""}` : ""}
-                    {divisionsInBuild.length ? ` · ${divisionsInBuild.length} division${divisionsInBuild.length === 1 ? "" : "s"}${missingDivTimes.length ? ` (${missingDivTimes.length} missing time)` : ""}` : ""}.
-                    {" "}Leave Weeks blank for one full round-robin{autoWeeks ? ` (${autoWeeks} week${autoWeeks !== 1 ? "s" : ""})` : ""}; set more to repeat the season.
-                  </div>
-                  <div className="btn-row" style={{ marginTop: 12 }}>
-                    <button
-                      className="btn primary"
-                      onClick={doPreview}
-                      disabled={busy || blocked}
-                      title={blocked
-                        ? (!fieldList.length ? "Add at least one field first" : `Set a first-game time for: ${missingDivTimes.join(", ") || "(missing)"}`)
-                        : ""}
-                    >{busy ? "Building…" : "Generate schedule (preview)"}</button>
-                    {weeks && <button className="btn" onClick={doSave}>Save schedule</button>}
-                  </div>
-                </>
-              );
-            })()}
+          </div>
 
-            <div className="aibox" style={{ marginTop: 16 }}>
+          <div className="card">
+            <div className="aibox">
               <div className="aibox-head"><span className="ai-badge">S-Dot</span> Or ask S-Dot</div>
               <AiPromptBar
                 pageId="schedule"
@@ -539,79 +837,15 @@ export default function Schedule({ go, onAsk, startRef }) {
                 onChange={setAi}
                 onSend={(t) => { setAi(t); setTimeout(submitAi, 0); }}
                 placeholder={`Describe the schedule for ${league || "this league"}…`}
-                hint={`Tap an option below or type your own — e.g. “make a season schedule for ${league || "this league"} starting in September”.`}
+                hint={`Skip the steps entirely — e.g. “make a season schedule for ${league || "this league"} starting in September”.`}
               />
             </div>
           </div>
 
-          <div className="card">
-            <div className="between" style={{ marginBottom: 6 }}>
-              <h3 style={{ margin: 0 }}>Teams</h3>
-              <span className="muted small">{allEffectiveTeams.length} included{guestTeams.length ? ` · ${guestTeams.length} guest` : ""}</span>
-            </div>
-            <p className="muted small" style={{ marginTop: 0 }}>Pulled from{league ? ` ${league}` : ""} roster — uncheck any you don't want this season, or add guest teams for tournament / cross-league play.</p>
-
-            {teamStats.length ? (
-              <div className="grid cols-2" style={{ marginTop: 6 }}>
-                {teamStats.map((s) => {
-                  const checked = !excludedTeams.has(s.team);
-                  return (
-                    <label className="between" key={s.team} style={{ padding: "4px 6px", borderBottom: "1px solid var(--line-soft)" }}>
-                      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <input type="checkbox" checked={checked} onChange={(e) => {
-                          setWeeks(null);
-                          setExcludedTeams((prev) => { const n = new Set(prev); if (e.target.checked) n.delete(s.team); else n.add(s.team); return n; });
-                        }} />
-                        <b>{s.team}</b>
-                        <span className="muted small">· {s.players} player{s.players !== 1 ? "s" : ""}</span>
-                        {s.divisions.length ? <span className="muted small">· {s.divisions.join(", ")}</span> : null}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="muted small">No teams yet for{league ? ` ${league}` : " any league"}. Build teams first or add a guest team below.</div>
-            )}
-
-            {guestTeams.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <div className="muted small" style={{ marginBottom: 4 }}>Guest teams</div>
-                <div style={{ display: "flex", flexWrap: "wrap" }}>
-                  {guestTeams.map((g) => (
-                    <span className="member" key={g}>{g}<button className="x" title="Remove" onClick={() => { setGuestTeams((p) => p.filter((x) => x !== g)); setWeeks(null); }}>×</button></span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="addbar" style={{ marginTop: 10 }}>
-              <input placeholder="Add a guest team — e.g. PHX U10 Eagles" value={guestText}
-                onChange={(e) => setGuestText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    const v = guestText.trim();
-                    if (!v) return;
-                    setGuestTeams((prev) => prev.some((x) => x.toLowerCase() === v.toLowerCase()) ? prev : [...prev, v]);
-                    setGuestText(""); setWeeks(null);
-                  }
-                }} />
-              <button className="btn" onClick={() => {
-                const v = guestText.trim(); if (!v) return;
-                setGuestTeams((prev) => prev.some((x) => x.toLowerCase() === v.toLowerCase()) ? prev : [...prev, v]);
-                setGuestText(""); setWeeks(null);
-              }}>Add guest team</button>
-            </div>
-          </div>
-
-          {league && <BlackoutsCard league={league} />}
-
-          {allEffectiveTeams.length < 2 && (
-            <div className="card"><p className="muted" style={{ margin: 0 }}>You need at least two saved teams. <a onClick={() => go({ page: "teambuilder", tab: "build" })}>Build teams</a> first, then come back.</p></div>
-          )}
           {weeks && <Weeks list={weeks} isPreview />}
         </>
-      )}
+        );
+      })()}
 
       {tab === "saved" && (
         <>
@@ -1280,7 +1514,7 @@ function ScoresTab() {
   );
 }
 
-function BlackoutsCard({ league }) {
+function BlackoutsCard({ league, bare = false }) {
   const [list, setList] = useState([]);
   const [date, setDate] = useState("");
   const [reason, setReason] = useState("");
@@ -1294,20 +1528,22 @@ function BlackoutsCard({ league }) {
     setDate(""); setReason(""); await load();
   }
   async function remove(id) { await api.blackoutRemove(id); await load(); }
-  return (
-    <div className="card">
-      <h3 style={{ marginTop: 0 }}>Blackout dates</h3>
-      <p className="muted small">Dates the schedule should skip — field unavailable, holidays, etc. The week dates auto-jump past them.</p>
+  const Body = (
+    <>
+      {!bare && <>
+        <h3 style={{ marginTop: 0 }}>Blackout dates</h3>
+        <p className="muted small">Dates the schedule should skip — field unavailable, holidays, etc. The week dates auto-jump past them.</p>
+      </>}
       <div className="row" style={{ flexWrap: "wrap", alignItems: "flex-end", gap: 8 }}>
         <div><label className="fld">Date</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-        <div style={{ flex: 1, minWidth: 180 }}><label className="fld">Reason (optional)</label><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Memorial Day, fields closed" /></div>
+        <div style={{ flex: "1 1 220px", minWidth: 180 }}><label className="fld">Reason (optional)</label><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Memorial Day, fields closed" /></div>
         <div><label className="fld">Scope</label>
           <select value={scope} onChange={(e) => setScope(e.target.value)}>
             <option value="league">Just {league}</option>
             <option value="global">All leagues</option>
           </select>
         </div>
-        <button className="btn primary" disabled={!date} onClick={add}>Add</button>
+        <button className="btn primary" style={{ flex: "0 0 auto" }} disabled={!date} onClick={add}>Add date</button>
       </div>
       <div className="stack" style={{ marginTop: 12 }}>
         {list.length ? list.map((b) => (
@@ -1315,10 +1551,11 @@ function BlackoutsCard({ league }) {
             <div className="small"><b>{b.date}</b>{b.league ? <span className="muted"> · {b.league}</span> : <span className="muted"> · all leagues</span>}{b.reason ? <span className="muted"> · {b.reason}</span> : null}</div>
             <button className="btn ghost sm" onClick={() => remove(b.id)}>Remove</button>
           </div>
-        )) : <div className="muted small">No blackouts yet.</div>}
+        )) : <div className="muted small">No blackouts yet — the season runs straight through.</div>}
       </div>
-    </div>
+    </>
   );
+  return bare ? Body : <div className="card">{Body}</div>;
 }
 
 // Combined rainout + explicit reschedule card. Sits at the top of the Saved

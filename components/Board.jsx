@@ -185,7 +185,9 @@ export default function Board({ go }) {
     <div>
       <div className="between" style={{ alignItems: "flex-start" }}>
         <div className="page-head"><h1>Team Board</h1><div className="muted">All teams for the week. Check someone in on the right and their day shows there.</div></div>
-        {go && <button className="btn ghost sm" onClick={() => go({ page: "home" })}>Home</button>}
+        {/* The board hides the sidebar, so it needs its own way out — back to
+            the hub it was opened from, not all the way to the dashboard. */}
+        {go && <button className="btn ghost sm" onClick={() => go({ page: "stations" })}>← Stations</button>}
       </div>
       {flash && <div className={"note " + (flash.ok ? "good" : "warn")}>{flash.text}</div>}
       {data.error && <div className="note warn">{data.error} <button className="btn ghost sm" style={{ marginLeft: 8 }} onClick={load}>Retry</button></div>}

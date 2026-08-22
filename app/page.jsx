@@ -21,6 +21,10 @@ import Board from "@/components/Board.jsx";
 import Attendance from "@/components/Attendance.jsx";
 import Advanced from "@/components/Advanced.jsx";
 import MasterSpreadsheet from "@/components/MasterSpreadsheet.jsx";
+import Unassigned from "@/components/Unassigned.jsx";
+import SettingsPage from "@/components/SettingsPage.jsx";
+import SeasonPage from "@/components/SeasonPage.jsx";
+import StationsPage from "@/components/StationsPage.jsx";
 import Standings from "@/components/Standings.jsx";
 import AssistantWidget from "@/components/AssistantWidget.jsx";
 import UsersPage from "@/components/UsersPage.jsx";
@@ -54,7 +58,7 @@ export default function Home() {
   const [assistantSeed, setAssistantSeed] = useState(null);
   const [contentKey, setContentKey] = useState(0);
   const [navOpen, setNavOpen] = useState(true);
-  const [openNav, setOpenNav] = useState({ sections: true, season: true, settings: true, stations: true });
+  const [openNav, setOpenNav] = useState({ main: true, sections: true });
   const [appMode, setAppMode] = useState("league");   // "league" (admin) or "ref" (mirrored referee view)
 
   const refresh = useCallback(async () => {
@@ -180,7 +184,43 @@ function ForcedPasswordChange({ username }) {
   );
 }
 
+const BUILT_IN_TYPES = ["division", "game", "attendance", "player", "coach", "team", "teams", "referee", "tournament"];
+
+// Icons for the two hub buttons. They inherit currentColor, so they follow the
+// nav's active/inactive colours without any extra CSS.
+const NavIcon = ({ children }) => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    style={{ flex: "0 0 17px" }} aria-hidden>{children}</svg>
+);
+// Season — a trophy: standings, tournaments, rankings.
+const SeasonIcon = () => (
+  <NavIcon>
+    <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z" />
+    <path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" />
+  </NavIcon>
+);
+// Stations — a scan viewfinder: the kiosk, the board, the register.
+const StationsIcon = () => (
+  <NavIcon>
+    <path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
+    <path d="M3 12h18" />
+  </NavIcon>
+);
+// Settings — a gear.
+const SettingsIcon = () => (
+  <NavIcon>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+  </NavIcon>
+);
+// A nav label with an icon in front of it.
+const IconLabel = ({ icon, children }) => (
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>{icon}{children}</span>
+);
+
 function MainShell({ navOpen, setNavOpen, appMode, view, navigate, sameView, openNav, setOpenNav, types, sectionLabel, contentKey, state, refresh, setAssistantSeed, assistantOpen, setAssistantOpen, assistantSeed, applied, switchMode, NavBtn, groupHdr }) {
+  const customTypes = (types || []).filter((t) => !BUILT_IN_TYPES.includes(t.name));
 
   return (
     <div className={"app" + (navOpen ? "" : " nav-collapsed") + (appMode === "ref" ? " ref-mode" : "")}>
@@ -220,50 +260,37 @@ function MainShell({ navOpen, setNavOpen, appMode, view, navigate, sameView, ope
           <>
             <NavBtn id={{ page: "home" }}>Home</NavBtn>
 
-            {groupHdr("sections", "Sections")}
-            {openNav.sections && (
+            {/* Main — the three pages the job actually runs on, first and open by
+                default. Everything else stays grouped below by how often you need it. */}
+            {groupHdr("main", "Main")}
+            {openNav.main && (
               <>
-                {/* Players & Coaches are always shown — even when there's nothing in there yet,
-                    so admins can find the section to set it up or import. */}
                 <NavBtn id={{ page: "people" }}>Players &amp; Coaches</NavBtn>
-                {types.filter((t) => !["division", "game", "attendance", "player", "coach", "team", "teams", "referee", "tournament"].includes(t.name)).map((t) => (
+                <NavBtn id={{ page: "teambuilder" }}>Teams</NavBtn>
+                <NavBtn id={{ page: "unassigned" }}>Unassigned</NavBtn>
+                <NavBtn id={{ page: "schedule" }}>Schedule</NavBtn>
+                <NavBtn id={{ page: "leagues" }}>Leagues &amp; Assignment</NavBtn>
+              </>
+            )}
+
+            {/* Sections now holds only the custom sections an admin has added —
+                the built-in ones live in Main or Season. Hidden entirely when
+                there are none, rather than showing an empty header. */}
+            {customTypes.length > 0 && groupHdr("sections", "Sections")}
+            {customTypes.length > 0 && openNav.sections && (
+              <>
+                {customTypes.map((t) => (
                   <NavBtn key={t.name} id={{ page: "section", type: t.name }}>{plural(t.label || t.name)}</NavBtn>
                 ))}
               </>
             )}
 
-            {groupHdr("season", "Season")}
-            {openNav.season && (
-              <>
-                <NavBtn id={{ page: "teambuilder" }}>Teams</NavBtn>
-                <NavBtn id={{ page: "schedule" }}>Schedule</NavBtn>
-                <NavBtn id={{ page: "standings" }}>Standings &amp; Scores</NavBtn>
-                <NavBtn id={{ page: "tournaments" }}>Tournaments</NavBtn>
-                <NavBtn id={{ page: "attendance" }}>Attendance</NavBtn>
-                <NavBtn id={{ page: "rankings" }}>Player Rankings</NavBtn>
-                <NavBtn id={{ page: "raffle" }}>Raffle</NavBtn>
-              </>
-            )}
-
-            {groupHdr("settings", "Settings")}
-            {openNav.settings && (
-              <>
-                <NavBtn id={{ page: "leagues" }}>Leagues &amp; Assignment</NavBtn>
-                <NavBtn id={{ page: "master" }}>Master Spreadsheet</NavBtn>
-                <NavBtn id={{ page: "users" }}>Users</NavBtn>
-                <NavBtn id={{ page: "changelog" }}>Change log</NavBtn>
-                <NavBtn id={{ page: "timemachine" }}>Time Machine</NavBtn>
-                <NavBtn id={{ page: "advanced" }}>Advanced</NavBtn>
-              </>
-            )}
-
-            {groupHdr("stations", "Stations")}
-            {openNav.stations && (
-              <>
-                <NavBtn id={{ page: "board" }}>Team Board</NavBtn>
-                <NavBtn id={{ page: "scanin" }}>Kiosk</NavBtn>
-              </>
-            )}
+            {/* Stations, Season and Settings are single buttons, not
+                dropdowns. Each opens a page of cards that says what every
+                destination is for — a collapsed list of bare names couldn't. */}
+            <NavBtn id={{ page: "stations" }}><IconLabel icon={<StationsIcon />}>Stations</IconLabel></NavBtn>
+            <NavBtn id={{ page: "season" }}><IconLabel icon={<SeasonIcon />}>Season</IconLabel></NavBtn>
+            <NavBtn id={{ page: "settings" }}><IconLabel icon={<SettingsIcon />}>Settings</IconLabel></NavBtn>
           </>
         )}
 
@@ -283,8 +310,13 @@ function MainShell({ navOpen, setNavOpen, appMode, view, navigate, sameView, ope
         {view.page === "schedule" && <Schedule key={`sch-${contentKey}-${appMode}`} go={navigate} startRef={appMode === "ref"} onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
         {view.page === "attendance" && <Attendance key={`att-${contentKey}`} go={navigate} />}
         {view.page === "leagues" && <Leagues key={`lg-${contentKey}`} refresh={refresh} onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
+        {view.page === "stations" && <StationsPage key={`sta-${contentKey}`} go={navigate} />}
+        {view.page === "season" && <SeasonPage key={`ssn-${contentKey}`} go={navigate} />}
+        {view.page === "settings" && <SettingsPage key={`set-${contentKey}`} go={navigate} />}
         {view.page === "advanced" && <Advanced key={`adv-${contentKey}`} refresh={refresh} />}
         {view.page === "master" && <MasterSpreadsheet key={`mst-${contentKey}`} />}
+        {view.page === "unassigned" && <Unassigned key={`una-${contentKey}`} go={navigate} refresh={refresh}
+          onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
         {view.page === "standings" && <Standings key={`std-${contentKey}`} onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
         {view.page === "assigned" && <RefAssign key={`asg-${contentKey}`} onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
         {view.page === "coverage" && <RefCoverage key={`cov-${contentKey}`} />}
@@ -344,7 +376,7 @@ function AccountChip() {
 // x-ff-season header; changing it remounts the current view. Defaults to the
 // current (most recently made) season.
 function SeasonPicker({ reloadKey, onChanged }) {
-  const [seasons, setSeasons] = useState([]);
+  const [detail, setDetail] = useState([]);
   const [untagged, setUntagged] = useState(0);
   const [sel, setSel] = useState("");
   useEffect(() => {
@@ -353,7 +385,7 @@ function SeasonPicker({ reloadKey, onChanged }) {
       try {
         const s = await api.seasonsList();
         if (dead || s.error) return;
-        setSeasons(s.seasons || []);
+        setDetail(s.detail || (s.seasons || []).map((n) => ({ name: n })));
         setUntagged(Number(s.untagged) || 0);
         let cur = null;
         try { cur = localStorage.getItem("ff_season"); } catch {}
@@ -366,7 +398,8 @@ function SeasonPicker({ reloadKey, onChanged }) {
     })();
     return () => { dead = true; };
   }, [reloadKey]);
-  if (!seasons.length) return null;
+  if (!detail.length) return null;
+  const cur = detail.find((d) => d.name === sel);
   return (
     <div style={{ padding: "0 12px", marginBottom: 10 }}>
       <select
@@ -377,13 +410,28 @@ function SeasonPicker({ reloadKey, onChanged }) {
           try { localStorage.setItem("ff_season", v); } catch {}
           onChanged && onChanged();
         }}
-        title="Season — scopes every page"
+        title="Season — scopes every page, every number and every export"
         style={{ width: "100%" }}
       >
         <option value="">All seasons</option>
-        {seasons.map((s) => <option key={s} value={s}>{s}</option>)}
+        {detail.map((d) => (
+          <option key={d.name} value={d.name}>
+            {d.name}{d.locked ? " 🔒" : ""}{typeof d.players === "number" ? ` · ${d.players}` : ""}
+          </option>
+        ))}
         {untagged > 0 && <option value="(no season)">No season (legacy · {untagged})</option>}
       </select>
+      {/* Say out loud what the numbers on screen cover. The old picker let
+          "All seasons" look identical to a single season once you scrolled. */}
+      <div className="muted small" style={{ marginTop: 4 }}>
+        {!sel
+          ? "Showing every season combined"
+          : sel === "(no season)"
+            ? "Legacy records with no season"
+            : cur?.locked
+              ? "Locked — read only"
+              : `${cur?.players ?? 0} players in this season`}
+      </div>
     </div>
   );
 }

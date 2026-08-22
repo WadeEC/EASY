@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import TeamBuilder from "./TeamBuilder.jsx";
 import TeamEditor from "./TeamEditor.jsx";
+import ExportBar from "./ExportBar.jsx";
 
 // The Teams page: a toggle between building teams and editing the saved teams.
 export default function TeamsPage({ go, onAsk, tab }) {
@@ -16,6 +17,7 @@ export default function TeamsPage({ go, onAsk, tab }) {
         <button className={"pill" + (sel === "build" ? " active" : "")} onClick={() => setSel("build")}>Build teams</button>
       </div>
       {sel === "build" ? <TeamBuilder go={go} onAsk={onAsk} /> : <TeamEditor go={go} onAsk={onAsk} />}
+      <ExportBar title="Export this season" />
     </div>
   );
 }

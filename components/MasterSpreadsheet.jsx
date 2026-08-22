@@ -1,12 +1,21 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { api } from "@/lib/api.js";
+import { api, currentSeason } from "@/lib/api.js";
+import ExportBar from "./ExportBar.jsx";
 
 // Master Spreadsheet view — every row the league has ever imported, including
 // columns we don't have a structured field for. Useful for:
 //   - auditing what came in from a given township / file
 //   - exporting a "union of all data" snapshot to CSV / XLSX
 //   - finding the original source row for a current player
+// Sort by surname, then first name — how you'd read a roster — with rows that
+// have no name at all pushed to the bottom instead of sprinkled through.
+function byName(a, b) {
+  const al = (a.last_name || "").toLowerCase(), bl = (b.last_name || "").toLowerCase();
+  if (!al !== !bl) return al ? -1 : 1;
+  return al.localeCompare(bl) || (a.first_name || "").toLowerCase().localeCompare((b.first_name || "").toLowerCase());
+}
+
 export default function MasterSpreadsheet() {
   const [summary, setSummary] = useState(null);
   const [data, setData] = useState(null);                  // { columns, rows }
@@ -17,6 +26,7 @@ export default function MasterSpreadsheet() {
   const [loading, setLoading] = useState(false);
   const [hiddenCols, setHiddenCols] = useState(() => new Set());
   const [showColsPicker, setShowColsPicker] = useState(false);
+  const [sortBy, setSortBy] = useState("recent");   // "recent" (as imported) | "name"
 
   async function load() {
     setLoading(true);
@@ -34,7 +44,10 @@ export default function MasterSpreadsheet() {
   // Rows shape from the API (see app/api/master/route.js → handle):
   //   { record_type, columns: [...data column names...], rows: [{ id, source_file, source_district, source_league, status, player_id, imported_at, imported_by, record_type, data: {...} }] }
   const allColumns = data?.columns || [];
-  const provenance = ["_source_file", "_source_district", "_source_league", "_status", "_player_id", "_imported_at"];
+  // First / last lead the table. Uploads name people in every possible shape —
+  // one "Player Name" column, separate First/Last, "Last, First" — and the master
+  // sheet's job is to stop that being your problem.
+  const provenance = ["_first_name", "_last_name", "_source_file", "_source_district", "_source_league", "_status", "_player_id", "_imported_at"];
   const allHeaders = [...provenance, ...allColumns];
   const visibleHeaders = allHeaders.filter((h) => !hiddenCols.has(h));
 
@@ -46,13 +59,20 @@ export default function MasterSpreadsheet() {
       if (status && (r.status || "") !== status) return false;
       if (qn) {
         // Search across name + data values + filename + district
-        const blob = [r.source_file, r.source_district, r.status, r.player_id, JSON.stringify(r.data || {})]
+        const blob = [r.first_name, r.last_name, r.source_file, r.source_district, r.status, r.player_id, JSON.stringify(r.data || {})]
           .filter(Boolean).join(" ").toLowerCase();
         if (!blob.includes(qn)) return false;
       }
       return true;
     });
   }, [data, q, district, status]);
+
+  // Default order is newest import first (how the rows arrive). Sorting by name
+  // is the other thing people want from a master sheet, so it's one click.
+  const rowsShown = useMemo(
+    () => (sortBy === "name" ? [...filtered].sort(byName) : filtered),
+    [filtered, sortBy]
+  );
 
   const districtChoices = useMemo(() => {
     const s = new Set();
@@ -69,14 +89,20 @@ export default function MasterSpreadsheet() {
     return Object.keys(summary.byType).length ? Object.keys(summary.byType) : ["player"];
   }, [summary]);
 
+  // The season always travels with the download, and the filename it produces
+  // names the season — so a master sheet sitting in someone's Downloads folder
+  // can't be mistaken for another year's.
   function downloadUrl(format) {
     const params = new URLSearchParams();
     if (type) params.set("type", type);
     params.set("format", format);
+    params.set("season", currentSeason());
     return `/api/master?${params.toString()}`;
   }
 
   function cellValue(row, header) {
+    if (header === "_first_name") return row.first_name || "";
+    if (header === "_last_name") return row.last_name || "";
     if (header === "_source_file") return row.source_file || "";
     if (header === "_source_district") return row.source_district || "";
     if (header === "_source_league") return row.source_league || "";
@@ -100,13 +126,29 @@ export default function MasterSpreadsheet() {
     <div>
       <div className="page-head" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h1 style={{ marginBottom: 4 }}>Master spreadsheet</h1>
-          <div className="muted">Every imported row, including columns the structured schema doesn't track. Source-of-truth audit trail for all uploads.</div>
+          <h1 style={{ marginBottom: 4 }}>
+            Master spreadsheet{" "}
+            <span className="chip brand lg">{currentSeason() === "*" ? "all seasons" : currentSeason()}</span>
+          </h1>
+          <div className="muted">
+            Every row imported into <strong>{currentSeason() === "*" ? "any season" : currentSeason()}</strong>, including
+            columns the structured schema doesn&apos;t track. Each season has its own master sheet — switch seasons
+            in the sidebar to see another one.
+          </div>
         </div>
         <div className="btn-row">
           <a className="btn" href={downloadUrl("csv")} download>Download CSV</a>
           <a className="btn primary" href={downloadUrl("xlsx")} download>Download Excel</a>
         </div>
+      </div>
+
+      {/* Those two buttons download the raw master rows. This exports the season
+          as a working workbook — rosters, teams, schedule, standings, attendance
+          and the master sheet as tabs. It sits up here because nobody finds a
+          button parked under a 400-row table. */}
+      <div className="card" style={{ padding: "12px 14px" }}>
+        <div className="muted small" style={{ marginBottom: 6 }}><b>Export the whole season</b> — rosters, teams, schedule, standings, attendance and master, as tabs.</div>
+        <ExportBar compact />
       </div>
 
       {/* Top summary strip */}
@@ -163,9 +205,15 @@ export default function MasterSpreadsheet() {
 
       {/* Count line + columns picker */}
       <div className="between" style={{ margin: "8px 0", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <div className="muted small">
-          {loading ? "Loading…" : `${filtered.length} of ${data?.rows?.length || 0} rows`}
-          {hiddenCols.size > 0 ? ` · ${hiddenCols.size} columns hidden` : ""}
+        <div className="muted small" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>
+            {loading ? "Loading…" : `${filtered.length} of ${data?.rows?.length || 0} rows`}
+            {hiddenCols.size > 0 ? ` · ${hiddenCols.size} columns hidden` : ""}
+          </span>
+          <span className="btn-row">
+            <button className={"pill" + (sortBy === "recent" ? " active" : "")} onClick={() => setSortBy("recent")}>Newest first</button>
+            <button className={"pill" + (sortBy === "name" ? " active" : "")} onClick={() => setSortBy("name")}>By last name</button>
+          </span>
         </div>
         <div style={{ position: "relative" }}>
           <button className="btn ghost sm" onClick={() => setShowColsPicker((v) => !v)} title="Show or hide columns">
@@ -217,19 +265,20 @@ export default function MasterSpreadsheet() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r, i) => (
+            {rowsShown.map((r, i) => (
               <tr key={r.id}>
                 {visibleHeaders.map((h, j) => (
                   <td key={h} style={j === 0 ? stickyCellStyle : undefined}>{cellValue(r, h)}</td>
                 ))}
               </tr>
             ))}
-            {!filtered.length && !loading && (
+            {!rowsShown.length && !loading && (
               <tr><td className="muted" colSpan={Math.max(1, visibleHeaders.length)} style={{ padding: 16 }}>No rows match the filters.</td></tr>
             )}
           </tbody>
         </table>
       </div>
+
     </div>
   );
 }
