@@ -6,3 +6,8 @@ league.db-*
 
 # AI agent
 .ai-pending-changes/
+
+# Season upgrade housekeeping (Aug 2026)
+_backups/
+_updates/
+_to_delete/
