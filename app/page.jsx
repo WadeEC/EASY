@@ -105,10 +105,15 @@ export default function Home() {
   const types = Array.isArray(state.types) ? state.types : [];
   const sectionLabel = types.find((t) => t.name === view.type)?.label;
 
-  // These render full-screen, with no sidebar or assistant.
+  // These render full-screen, with no sidebar or assistant — they're kiosks,
+  // pointed at a parent, not at an admin.
+  //
+  // The check-in board is NOT one of them any more. It's a staff screen, and
+  // every filter on it is season-scoped, so running it without the sidebar
+  // meant working a Saturday with no way to see — or change — which season you
+  // were checking people into.
   if (view.page === "scanin") return <ScanIn go={navigate} />;
   if (view.page === "refscanin") return <RefScanIn />;
-  if (view.page === "board") return <div className="fullpage"><Board go={navigate} /></div>;
 
   // When an admin resets your password, the must_change_password flag forces
   // a one-time change before any other page renders. The gate calls /api/auth/me
@@ -309,6 +314,7 @@ function MainShell({ navOpen, setNavOpen, appMode, view, navigate, sameView, ope
         {view.page === "teambuilder" && <TeamsPage key={`tb-${contentKey}`} go={navigate} tab={view.tab} onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
         {view.page === "schedule" && <Schedule key={`sch-${contentKey}-${appMode}`} go={navigate} startRef={appMode === "ref"} onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
         {view.page === "attendance" && <Attendance key={`att-${contentKey}`} go={navigate} />}
+        {view.page === "board" && <Board key={`board-${contentKey}`} go={navigate} />}
         {view.page === "leagues" && <Leagues key={`lg-${contentKey}`} refresh={refresh} onAsk={(text) => setAssistantSeed({ text, key: Date.now() })} />}
         {view.page === "stations" && <StationsPage key={`sta-${contentKey}`} go={navigate} />}
         {view.page === "season" && <SeasonPage key={`ssn-${contentKey}`} go={navigate} />}

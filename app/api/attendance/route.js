@@ -27,7 +27,7 @@ export async function POST(req) {
     const checked = getCheckins(b.week);
     const fields = getFields("player").map((f) => ({ name: f.name, label: f.label, data_type: f.data_type, required: !!f.required, options: f.options }));
     const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: divisionOf(d), team: d.team || "", present: checked.has(r.id), data: d }; });
-    const leagues = leagueOptions(all.map((p) => p.league));
+    const leagues = leagueOptions(all.map((p) => p.league), leaguesForSeason(season));
     // Defined brackets first, in age order — see divisionOptions.
     const divisions = divisionOptions(all.map((p) => p.division));
     const teams = [...new Set(all.map((p) => p.team).filter(Boolean))];
@@ -135,7 +135,7 @@ export async function POST(req) {
     const out = players.map((p) => { const set = byPlayer[p.id] || new Set(); return { ...p, present: weeks.map((w) => set.has(w)), count: set.size }; });
     return Response.json({
       weeks, players: out, totalWeeks: weeksSet.size,
-      leagues: leagueOptions(all.map((p) => p.league)),
+      leagues: leagueOptions(all.map((p) => p.league), leaguesForSeason(season)),
       divisions: divisionOptions(all.map((p) => p.division)),
       teams: [...new Set(all.map((p) => p.team).filter(Boolean))],
     });

@@ -51,7 +51,7 @@ export async function POST(req) {
     });
     return Response.json({
       players, fields,
-      leagues: leagueOptions(players.map((p) => p.league)),
+      leagues: leagueOptions(players.map((p) => p.league), leaguesForSeason(season)),
       divisions: divisionOptions(players.map((p) => p.division)),
     });
   }

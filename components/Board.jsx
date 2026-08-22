@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api.js";
+import { api, currentSeason } from "@/lib/api.js";
 import FieldInput from "./FieldInput.jsx";
 
 const toISO = (d) => d.toISOString().slice(0, 10);
@@ -214,9 +214,14 @@ export default function Board({ go }) {
   return (
     <div>
       <div className="between" style={{ alignItems: "flex-start" }}>
-        <div className="page-head"><h1>Team Board</h1><div className="muted">All teams for the week. Check someone in on the right and their day shows there.</div></div>
-        {/* The board hides the sidebar, so it needs its own way out — back to
-            the hub it was opened from, not all the way to the dashboard. */}
+        <div className="page-head">
+          <h1>Team Board <span className="chip brand lg">{currentSeason() === "*" ? "all seasons" : currentSeason()}</span></h1>
+          <div className="muted">
+            Check someone in on the right and their day shows there. Everything here — leagues,
+            divisions, teams, attendance — belongs to <strong>{currentSeason() === "*" ? "every season at once" : currentSeason()}</strong>;
+            switch seasons in the sidebar.
+          </div>
+        </div>
         {go && <button className="btn ghost sm" onClick={() => go({ page: "stations" })}>← Stations</button>}
       </div>
       {flash && <div className={"note " + (flash.ok ? "good" : "warn")}>{flash.text}</div>}

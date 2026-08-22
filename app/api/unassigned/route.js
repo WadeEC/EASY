@@ -35,6 +35,7 @@ export async function GET(req) {
     // list was empty and the League picker had nothing in it).
     leagues: leagueOptions(
       (data.no_league || []).concat(data.no_division || [], data.no_team || []).map((p) => p.league),
+      leaguesForSeason(named || currentScope().season),
     ),
     locks: getLeagueLocks(),
   });
