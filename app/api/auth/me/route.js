@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // GET → returns the current user (or 401). Also surfaces `first_run`: true
 // when there are zero users in the DB, so the login page can default to
 // "Create account" without an extra probe.
@@ -12,6 +13,7 @@ function firstRun() {
 }
 
 export async function GET(req) {
+  bindRequest(req);
   const u = setActorFromSession(req);
   if (!u) return Response.json({ user: null, first_run: firstRun() }, { status: 401 });
   return Response.json({

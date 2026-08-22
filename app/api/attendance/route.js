@@ -1,6 +1,9 @@
-import { getRecords, getFields, seedAttendance, getCheckins, setCheckin, updateRecord } from "@/lib/tools.js";
+import {
+  getRecords, getFields, seedAttendance, getCheckins, setCheckin, updateRecord,
+  attendanceWeek, saveAttendanceWeek, attendanceWeeks, ATTENDANCE_STATUSES,
+} from "@/lib/tools.js";
 import { getRow, now, logAudit } from "@/lib/db.js";
-import { getActor, setActorFromReq } from "@/lib/actor.js";
+import { getActor, bindRequest } from "@/lib/actor.js";
 import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 import { emit } from "@/lib/event-bus.js";
 
@@ -16,6 +19,7 @@ function weekStartISO(iso) {
 }
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json();
   const season = seasonFromReq(req); // sidebar season picker
 
@@ -42,17 +46,50 @@ export async function POST(req) {
     });
   }
 
+  // One week's sheet: everyone on the roster, with present / absent / excused /
+  // not-taken, plus who marked it and when. This is the unit you export.
+  if (b.action === "week_sheet") {
+    return Response.json({
+      ...attendanceWeek({ week: b.week, league: b.league || null, division: b.division || null, team: b.team || null }),
+      weeks: attendanceWeeks(b.league || null),
+      statuses: ATTENDANCE_STATUSES,
+    });
+  }
+
+  // Save a whole week at once (the Save button). Reports what was refused.
+  if (b.action === "save_week") {
+    const res = saveAttendanceWeek({ week: b.week, entries: b.entries || [], via: "sheet" });
+    if (!res.error) {
+      for (const e of b.entries || []) {
+        emit("checkin", {
+          player_id: Number(e.id ?? e.player_id), player: e.name || "", week: b.week,
+          present: String(e.status || "") === "present", via: "sheet",
+        });
+      }
+    }
+    return Response.json(res);
+  }
+
+  if (b.action === "weeks") {
+    return Response.json({ weeks: attendanceWeeks(b.league || null) });
+  }
+
   if (b.action === "toggle") {
-    const res = setCheckin(b.player_id, b.player, b.week, b.present);
+    // `present` may be a boolean (old callers) or a status string.
+    const res = setCheckin(b.player_id, b.player, b.week, b.status ?? b.present, { note: b.note, via: b.via || "board" });
+    if (res.error) return Response.json(res);
     // Fan-out to any open Board / live view so they refresh without waiting
     // for the next slow-poll tick.
-    emit("checkin", { player_id: Number(b.player_id), player: b.player, week: b.week, present: !!b.present, via: "board" });
+    emit("checkin", {
+      player_id: Number(b.player_id), player: b.player, week: b.week,
+      present: res.status === "checked_in", via: b.via || "board",
+    });
     return Response.json(res);
   }
 
   if (b.action === "confirm_size") {
     // On-site gate before printing: stamp size confirmation + (optionally) update size + check in.
-    setActorFromReq(req);
+    bindRequest(req);
     const pid = Number(b.player_id);
     const row = getRow("records", pid);
     if (!row || row.type !== "player") return Response.json({ error: "Player not found." });
@@ -68,7 +105,7 @@ export async function POST(req) {
     };
     if (newSize !== (d.jersey_size || "")) patch.jersey_size = newSize;
     updateRecord(pid, patch);
-    if (b.week && b.player) setCheckin(pid, b.player, b.week, true);
+    if (b.week && b.player) setCheckin(pid, b.player, b.week, true, { via: "kiosk" });
     logAudit(getActor(), "confirm_size", "records", pid, { jersey_size: d.jersey_size || "" }, { jersey_size: newSize, confirmed_at: patch.size_confirmed_at }, "on-site size confirmation");
     // Push to the live event bus so the admin Board lights up instantly.
     emit("checkin", { player_id: pid, player: b.player || row.name, week: b.week, present: true, via: "kiosk", jersey_size: newSize });
@@ -124,7 +161,7 @@ export async function POST(req) {
     const p = matches[0];
     const already = getCheckins(b.week).has(p.id);
     if (!already) {
-      setCheckin(p.id, p.name, b.week, true);
+      setCheckin(p.id, p.name, b.week, true, { via: "scan" });
       emit("checkin", { player_id: p.id, player: p.name, week: b.week, present: true, via: "scan" });
     }
     return Response.json({ status: already ? "already" : "checked_in", player: { id: p.id, name: p.name, team: p.team || "", league: p.league || "" } });

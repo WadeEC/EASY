@@ -9,6 +9,7 @@
 // POST is also supported for symmetry with other internal routes (same body shape: { league, format }).
 
 import { getSchedule } from "@/lib/tools.js";
+import { bindRequest } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +76,7 @@ function respond(games, format) {
 }
 
 export async function GET(req) {
+  bindRequest(req);
   const league = pickLeague(req);
   const format = pickFormat(req);
   const games = getSchedule(league);
@@ -82,6 +84,7 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
+  bindRequest(req);
   let b = {};
   try { b = await req.json(); } catch {}
   const league = pickLeague(req, b.league);

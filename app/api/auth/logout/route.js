@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // POST → clears the current session.
 import { logout, SESSION_COOKIE } from "@/lib/auth.js";
 
@@ -10,6 +11,7 @@ function readToken(req) {
 }
 
 export async function POST(req) {
+  bindRequest(req);
   const token = readToken(req);
   logout(token);
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";

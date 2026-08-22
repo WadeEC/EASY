@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 import {
   setupDivisions, reassignDivisions, getRecordTypes, getDivisions, createDivision,
   seedStandardDivisions, deleteRecord, getFields,
@@ -6,6 +7,7 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json();
   if (b.action === "setup") return Response.json(setupDivisions());
   if (b.action === "reassign") return Response.json(reassignDivisions());

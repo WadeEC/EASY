@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 import { seedStandardPlayers } from "@/lib/tools.js";
 
 export const dynamic = "force-dynamic";

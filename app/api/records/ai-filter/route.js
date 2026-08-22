@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 import { chat } from "@/lib/llm.js";
 import { getFields, slug } from "@/lib/tools.js";
 
@@ -13,6 +14,7 @@ export const dynamic = "force-dynamic";
 //   field must be one of the known field names for this record type
 //   value is a string or number
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json().catch(() => ({}));
   const record_type = slug(b.record_type || "player");
   const q = String(b.query || "").trim();

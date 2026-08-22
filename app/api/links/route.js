@@ -1,12 +1,12 @@
 import {
   listLinks, createLink, addLinkMember, removeLinkMember, deleteLink, setLinkReason,
 } from "@/lib/tools.js";
-import { setActorFromReq } from "@/lib/actor.js";
+import { bindRequest } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req) {
-  setActorFromReq(req);
+  bindRequest(req);
   const b = await req.json();
   if (b.action === "list") return Response.json({ links: listLinks() });
   if (b.action === "create") return Response.json(createLink({ kind: b.kind, playerIds: b.playerIds || [], coachIds: b.coachIds || [], reason: b.reason || "" }));

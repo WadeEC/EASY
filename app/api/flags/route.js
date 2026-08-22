@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 import {
   createFlag, getFlags, evaluateFlags, seedDefaultFlags, deleteRule, setRuleActive,
   getRecordTypes, getFields, FLAG_OPS, ensureJerseyHoldFlag,
@@ -6,6 +7,7 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json();
 
   if (b.action === "list") {

@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // User-management endpoint.
 //
 //   GET                                 → list users (admin only, no password hashes)
@@ -21,12 +22,14 @@ export const dynamic = "force-dynamic";
 function isAdmin(u) { return !!u && u.role === "admin"; }
 
 export async function GET(req) {
+  bindRequest(req);
   const u = setActorFromSession(req);
   if (!isAdmin(u)) return Response.json({ error: "Admin only." }, { status: 403 });
   return Response.json({ users: listUsers() });
 }
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json().catch(() => ({}));
   const u = setActorFromSession(req);
   // "create" is open to anyone (self-signup). Every other action is admin-only.

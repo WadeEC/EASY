@@ -1,5 +1,6 @@
 import { getRecords } from "@/lib/tools.js";
 import { seasonFromReq, inSeason } from "@/lib/seasons.js";
+import { bindRequest } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -45,6 +46,7 @@ function details(p, coaches, games) {
 }
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json();
   const season = seasonFromReq(req); // sidebar season picker
   const method = b.method || "name";

@@ -1,5 +1,6 @@
-import { getFields, getRecords, applyCreateRecord, validateRecord, identityKey, findAmbiguousMatches, slug, writeMasterRow, coerceSelectValue } from "@/lib/tools.js";
-import { setActorFromReq } from "@/lib/actor.js";
+import { getFields, getRecords, getRecordsForSeason, getRecordsAll, applyCreateRecord, validateRecord, identityKey, findAmbiguousMatches, slug, writeMasterRow, coerceSelectValue } from "@/lib/tools.js";
+import { setScope, assertWritable } from "@/lib/season-scope.js";
+import { bindRequest } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
 
@@ -10,13 +11,20 @@ const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; 
 //   allowAmbiguous?: [rowIndex, ...]   // user reviewed these and chose "Add as new"
 // }
 export async function POST(req) {
-  setActorFromReq(req); // stamp every audit row with the signed-in user
+  bindRequest(req); // stamp every audit row with the signed-in user
   const b = await req.json();
   const rtype = slug(b.type);
   const fields = getFields(rtype);
   const mapping = b.mapping || {};
   const source = b.source || null;
   const season = b.season || null; // which season this upload belongs to
+  // The upload's own season picker wins over the sidebar for the whole request:
+  // every read below (dedup, ambiguity) and every write lands in that season.
+  if (season) {
+    const blocked = assertWritable(season);
+    if (blocked) return Response.json({ error: blocked }, { status: 400 });
+    setScope(season);
+  }
   const sourceFile = b.sourceFile || b.filename || null;
   const rows = b.rows || [];
   const allowAmbiguous = new Set((b.allowAmbiguous || []).map((n) => Number(n)));
@@ -26,19 +34,19 @@ export async function POST(req) {
   // DIFFERENT season are not duplicates — a returning player must be able to
   // register again next season. Records with no season tag still match any
   // season (safer until they're backfilled).
+  // STRICT: only records in the TARGET season count as duplicates — a returning
+  // player must be able to register again next season. This is now enforced by
+  // the season column rather than re-checked per row, so it can't drift.
   const existingByKey = new Map();
   const otherSeasonIds = new Set();
-  for (const r of getRecords(rtype)) {
-    const d = parse(r.data);
-    // STRICT: only same-season records count as duplicates. Untagged (legacy)
-    // records belong to the "(no season)" bucket, so a new season's import
-    // re-registers returning players instead of skipping them.
-    if (season && rtype === "player" && String(d.season || "") !== String(season)) {
-      otherSeasonIds.add(r.id);
-      continue;
-    }
-    const k = identityKey(d);
+  const inTarget = season ? getRecordsForSeason(rtype, season) : getRecords(rtype);
+  for (const r of inTarget) {
+    const k = identityKey(parse(r.data));
     if (k) existingByKey.set(k, { id: r.id, name: r.name });
+  }
+  if (season && rtype === "player") {
+    const targetIds = new Set(inTarget.map((r) => r.id));
+    for (const r of getRecordsAll(rtype)) if (!targetIds.has(r.id)) otherSeasonIds.add(r.id);
   }
   const seenKeys = new Set(existingByKey.keys());
 
@@ -91,7 +99,7 @@ export async function POST(req) {
     if (key && seenKeys.has(key)) {
       const hit = existingByKey.get(key) || {};
       recognizedNames.push({ id: hit.id || null, name: displayName, rowIndex: n + 1 });
-      try { writeMasterRow({ record_type: rtype, source_file: sourceFile, source_district: source, source_league: data.league || null, identity_key: key, status: "recognized", player_id: hit.id || null, raw_data: row }); } catch {}
+      try { writeMasterRow({ record_type: rtype, source_file: sourceFile, source_district: source, source_league: data.league || null, season, identity_key: key, status: "recognized", player_id: hit.id || null, raw_data: row }); } catch {}
       return;
     }
 
@@ -134,6 +142,7 @@ export async function POST(req) {
         source_file: sourceFile,
         source_district: source,
         source_league: data.league || null,
+        season,
         identity_key: key,
         status: wasAmbiguousOverride ? "ambiguous_added" : "added",
         player_id: res?.id || null,
@@ -143,6 +152,7 @@ export async function POST(req) {
   });
 
   return Response.json({
+    season,
     added,
     addedNames,
     duplicates: recognizedNames.length, // back-compat for older clients

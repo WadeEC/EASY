@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 import { promises as fs } from "fs";
 import path from "path";
 import { getDb } from "@/lib/db.js";
@@ -40,6 +41,7 @@ function dedupMarkers(existing, incoming) {
 
 // POST { district, league?, newMarkers?: [{value, tier}], createDistrict?: bool }
 export async function POST(req) {
+  bindRequest(req);
   let body = {};
   try { body = await req.json(); } catch { body = {}; }
 

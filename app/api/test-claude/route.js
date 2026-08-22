@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // Diagnostic endpoint — bypasses the agent loop and tool schemas to test
 // if the raw Claude API call works.
 //   GET /api/test-claude        -> minimal call, no tools
@@ -6,6 +7,7 @@
 export const dynamic = "force-dynamic";
 
 export async function GET(req) {
+  bindRequest(req);
   const url = new URL(req.url);
   const withTools = url.searchParams.get("tools") === "1";
   const withCache = url.searchParams.get("cache") === "1";

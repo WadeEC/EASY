@@ -1,5 +1,5 @@
 import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag } from "@/lib/tools.js";
-import { setActorFromReq } from "@/lib/actor.js";
+import { bindRequest } from "@/lib/actor.js";
 import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +34,7 @@ function scanDetail(p) {
 }
 
 export async function POST(req) {
-  setActorFromReq(req);
+  bindRequest(req);
   const b = await req.json();
   const season = seasonFromReq(req); // sidebar season picker
 
@@ -89,9 +89,15 @@ export async function POST(req) {
     return Response.json({ status: present ? "already" : "checked_out", ...scanDetail(p) });
   }
 
-  if (b.action === "note") { updateRecord(Number(b.player_id), { notes: b.notes || "" }); return Response.json({ status: "saved" }); }
+  if (b.action === "note") {
+    const res = updateRecord(Number(b.player_id), { notes: b.notes || "" });
+    return Response.json(res.error ? { error: res.error } : { status: "saved" });
+  }
   if (b.action === "toggle") { setCheckin(Number(b.player_id), b.player || "", b.week, !!b.present); return Response.json({ status: "ok", present: !!b.present }); }
-  if (b.action === "set_jersey") { updateRecord(Number(b.player_id), { jersey_issued: !!b.issued }); return Response.json({ status: "ok", issued: !!b.issued }); }
+  if (b.action === "set_jersey") {
+    const res = updateRecord(Number(b.player_id), { jersey_issued: !!b.issued });
+    return Response.json(res.error ? { error: res.error } : { status: "ok", issued: !!b.issued });
+  }
 
   return Response.json({ error: "unknown action" });
 }

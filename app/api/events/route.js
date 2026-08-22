@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // Server-Sent Events stream. Each connected client gets a long-lived
 // `text/event-stream` connection; whenever the event bus emits, the data is
 // pushed to every active stream immediately.

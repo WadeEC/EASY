@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // Cost dashboard endpoint.
 //   GET /api/costs?days=30  -> totals, projection, cache hit rate, breakdown by model
 //   GET /api/costs?recent=1 -> last 20 calls with per-call cost
@@ -6,6 +7,7 @@ import { getUsage, recentCalls } from "@/lib/usage.js";
 export const dynamic = "force-dynamic";
 
 export async function GET(req) {
+  bindRequest(req);
   const url = new URL(req.url);
   if (url.searchParams.get("recent")) {
     const limit = Number(url.searchParams.get("recent")) || 20;

@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // Long-term memory inspection.
 //   GET  /api/memory               -> list recent facts
 //   POST /api/memory  {key, value, scope} -> remember
@@ -12,6 +13,7 @@ export async function GET() {
 }
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json();
   if (b.forget) return Response.json(forget(Number(b.forget)));
   if (b.clearScope) return Response.json(clearScope(String(b.clearScope)));

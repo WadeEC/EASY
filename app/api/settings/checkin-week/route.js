@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // Active check-in week — shared between the admin Team Board and the Kiosk.
 // Stored as a league-scope setting in ai_facts (key="setting:active_checkin_week").
 // When unset, the client falls back to the current calendar week.
@@ -25,6 +26,7 @@ export async function GET() {
 }
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json().catch(() => ({}));
   const w = (b.week || "").trim();
   if (w && !/^\d{4}-\d{2}-\d{2}$/.test(w)) return Response.json({ error: "week must be YYYY-MM-DD" });

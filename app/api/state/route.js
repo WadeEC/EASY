@@ -1,5 +1,6 @@
 import { getRecordTypes } from "@/lib/tools.js";
 import { listAudit } from "@/lib/db.js";
+import { bindRequest } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
 

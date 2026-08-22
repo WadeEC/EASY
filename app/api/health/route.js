@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // Health + provider control endpoint.
 //   GET  /api/health                      -> status of LLM providers, rate limits
 //   POST /api/health { force: "groq"|"ollama"|"auto" } -> manually pick which to use
@@ -18,6 +19,7 @@ export async function GET() {
 }
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json().catch(() => ({}));
   if (b.force) return Response.json(setPrimaryOverride(b.force));
   if (b.probe) {

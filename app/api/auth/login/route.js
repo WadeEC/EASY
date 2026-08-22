@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 // POST { username, password } → sets httpOnly session cookie.
 import { login, SESSION_COOKIE } from "@/lib/auth.js";
 
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 const COOKIE_SECURE = process.env.NODE_ENV === "production" ? "; Secure" : "";
 
 export async function POST(req) {
+  bindRequest(req);
   const b = await req.json().catch(() => ({}));
   const ua = req.headers.get("user-agent") || "";
   const res = login({ username: b.username, password: b.password, userAgent: ua });

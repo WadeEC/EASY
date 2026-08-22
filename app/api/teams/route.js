@@ -5,7 +5,7 @@ import {
   linkData, listLinks,
 } from "@/lib/tools.js";
 import { buildTeams } from "@/lib/teams.js";
-import { setActorFromReq } from "@/lib/actor.js";
+import { bindRequest } from "@/lib/actor.js";
 import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
 
 export async function POST(req) {
-  setActorFromReq(req);
+  bindRequest(req);
   const b = await req.json();
   const season = seasonFromReq(req); // sidebar season picker — null = all seasons
 
@@ -127,14 +127,23 @@ export async function POST(req) {
   if (b.action === "save") {
     if (!getFields("player").some((f) => f.name === "team")) addField("player", "team", "text", "Team");
     let saved = 0;
-    for (const t of b.teams || []) for (const id of t.ids || []) { updateRecord(id, { team: t.name }); saved++; }
+    const blocked = [];
+    for (const t of b.teams || []) for (const id of t.ids || []) {
+      const res = updateRecord(id, { team: t.name });
+      if (res.error) blocked.push({ id, reason: res.error }); else saved++;
+    }
     let coachesSaved = 0;
     const anyCoaches = (b.teams || []).some((t) => (t.coachIds || []).length);
     if (anyCoaches && getRecordTypes().some((x) => x.name === "coach")) {
       if (!getFields("coach").some((f) => f.name === "team")) addField("coach", "team", "text", "Team");
-      for (const t of b.teams || []) for (const id of t.coachIds || []) { updateRecord(id, { team: t.name }); coachesSaved++; }
+      for (const t of b.teams || []) for (const id of t.coachIds || []) {
+        const res = updateRecord(id, { team: t.name });
+        if (res.error) blocked.push({ id, reason: res.error }); else coachesSaved++;
+      }
     }
-    return Response.json({ saved, coachesSaved });
+    // Say what didn't save. A silent partial write is worse than a refusal.
+    if (blocked.length && !saved && !coachesSaved) return Response.json({ error: blocked[0].reason });
+    return Response.json({ saved, coachesSaved, blocked: blocked.length, blocked_details: blocked.slice(0, 10) });
   }
 
   return Response.json({ error: "unknown action" });

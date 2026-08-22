@@ -1,10 +1,10 @@
 import { getPressQueue, pressStatusFor, setPressOverride } from "@/lib/tools.js";
-import { setActorFromReq } from "@/lib/actor.js";
+import { bindRequest } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req) {
-  setActorFromReq(req);
+  bindRequest(req);
   const b = await req.json();
   if (b.action === "list") return Response.json(getPressQueue(b.league || null));
   if (b.action === "status") return Response.json(pressStatusFor(Number(b.player_id)));

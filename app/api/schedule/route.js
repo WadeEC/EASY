@@ -7,12 +7,12 @@ import {
 } from "@/lib/tools.js";
 import { buildSchedule, weekDate, clockTime, placeOnFields } from "@/lib/schedule.js";
 import { seasonFromReq, leaguesForSeason } from "@/lib/seasons.js";
-import { setActorFromReq } from "@/lib/actor.js";
+import { bindRequest } from "@/lib/actor.js";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req) {
-  setActorFromReq(req);
+  bindRequest(req);
   const b = await req.json();
   const season = seasonFromReq(req); // sidebar season picker — null = all seasons
 
@@ -92,7 +92,10 @@ export async function POST(req) {
   if (b.action === "save") return Response.json(saveSchedule(b.league || null, b.games || [], season));
   if (b.action === "clear") return Response.json({ ...saveSchedule(b.league || null, [], season), cleared: true });
   if (b.action === "list") return Response.json({ games: getSchedule(b.league || null, season) });
-  if (b.action === "assign_ref") { updateRecord(Number(b.game_id), { referee: b.referee || "" }); return Response.json({ status: "ok" }); }
+  if (b.action === "assign_ref") {
+    const res = updateRecord(Number(b.game_id), { referee: b.referee || "" });
+    return Response.json(res.error ? { error: res.error } : { status: "ok" });
+  }
 
   if (b.action === "mark_worked") return Response.json(markGameWorked(b.game_id, b.ref_name));
   if (b.action === "unmark_worked") return Response.json(unmarkGameWorked(b.game_id, b.ref_name));

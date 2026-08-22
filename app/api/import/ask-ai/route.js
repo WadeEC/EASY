@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 import { chat } from "@/lib/llm.js";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,7 @@ function extractJsonBlock(text) {
 //   fields: [{ name, label, type }]   target schema we're mapping into
 // Returns: { district, league, reason, newDistrictSuggestion, headerMap }
 export async function POST(req) {
+  bindRequest(req);
   let body = {};
   try { body = await req.json(); } catch { body = {}; }
 

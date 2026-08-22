@@ -1,3 +1,4 @@
+import { bindRequest } from "@/lib/actor.js";
 import { promises as fs } from "fs";
 import path from "path";
 import { detectDistrict } from "@/lib/import-detect.js";
@@ -15,6 +16,7 @@ const EMPTY = {
 
 // POST { rows, filename } -> detection result
 export async function POST(req) {
+  bindRequest(req);
   let body = {};
   try { body = await req.json(); } catch { body = {}; }
   const rows = Array.isArray(body.rows) ? body.rows : [];

@@ -1,5 +1,5 @@
 import { runAgent } from "@/lib/agent.js";
-import { setActorFromReq } from "@/lib/actor.js";
+import { bindRequest } from "@/lib/actor.js";
 import { guard } from "@/lib/guard.js";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req) {
   const g = guard(req);
   if (!g.ok) return g.response;
-  setActorFromReq(req);
+  bindRequest(req);
   const b = await req.json();
   // Accept new-shape { messages, pageContext } and legacy bare messages array.
   try {
