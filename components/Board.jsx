@@ -262,7 +262,7 @@ export default function Board({ go }) {
             <div className="row" style={{ flexWrap: "wrap" }}>
               <div>
                 <label className="fld">League</label>
-                <select value={league} onChange={(e) => { setLeague(e.target.value); setDivision(""); }}>
+                <select value={league} onChange={(e) => { setLeague(e.target.value); setDivision(""); }} style={{ minWidth: 180 }}>
                   <option value="">All leagues</option>
                   {data.leagues.map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>
@@ -271,14 +271,15 @@ export default function Board({ go }) {
                 {/* Divisions come from the brackets you defined, so this works
                     with or without a league picked, and with or without teams. */}
                 <label className="fld">Division</label>
-                <select value={division} onChange={(e) => setDivision(e.target.value)}>
+                <select value={division} onChange={(e) => setDivision(e.target.value)} style={{ minWidth: 170 }}>
                   <option value="">All divisions</option>
                   {divOptions.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
               <div>
                 <label className="fld">Week</label>
-                <select value={week} onChange={(e) => changeWeek(e.target.value)} title="Active check-in week — the kiosk uses this too">
+                <select value={week} onChange={(e) => changeWeek(e.target.value)} style={{ minWidth: 260 }}
+                  title="Active check-in week — the kiosk uses this too">
                   {weekList.map((w) => (
                     <option key={w.week} value={w.week}>
                       {w.label} · {fmtDate(w.date)}{w.current ? " (this week)" : ""}{w.cancelled ? " — cancelled" : ""}
@@ -287,7 +288,7 @@ export default function Board({ go }) {
                 </select>
               </div>
               <div style={{ alignSelf: "flex-end" }}>
-                <div className="btn-row" style={{ gap: 6 }}>
+                <div className="btn-row" style={{ gap: 6, whiteSpace: "nowrap" }}>
                   <button className="btn ghost sm"
                     onClick={() => { const w = weekList.find((x) => x.week === week); setRenaming({ week, label: w?.named ? w.label : "" }); }}
                     title="Name this week — Jamboree, Week 0, Picture Day">Rename</button>
