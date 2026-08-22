@@ -1,5 +1,5 @@
 import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag } from "@/lib/tools.js";
-import { bindRequest } from "@/lib/actor.js";
+import { bindRequest, getActor } from "@/lib/actor.js";
 import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +29,9 @@ function scanDetail(p) {
   return {
     player: { id: p.id, name: p.name, age: p.age ?? "", division: p.division || "", league: p.league || "" },
     team, coaches, field, games, notes: p.notes || "", flags: flagsForPlayer(p),
-    jerseySize: p.jersey_size || "", jerseyIssued: p.jersey_issued === true, issues: playerIssues(p),
+    jerseySize: p.jersey_size || "", jerseyIssued: p.jersey_issued === true,
+    sizeConfirmedAt: p.size_confirmed_at || "", sizeConfirmedBy: p.size_confirmed_by || "",
+    issues: playerIssues(p),
   };
 }
 
@@ -94,6 +96,32 @@ export async function POST(req) {
     return Response.json(res.error ? { error: res.error } : { status: "saved" });
   }
   if (b.action === "toggle") { setCheckin(Number(b.player_id), b.player || "", b.week, !!b.present); return Response.json({ status: "ok", present: !!b.present }); }
+  // Set the size on the spot. The size is the thing you find out AT the table
+  // — the kid is standing there and the sheet says nothing — so it has to be
+  // editable where the jersey is handed over, not three screens away.
+  if (b.action === "set_jersey_size") {
+    const want = String(b.size == null ? "" : b.size).trim();
+    const f = getFields("player").find((x) => x.name === "jersey_size");
+    let opts = []; try { opts = f && f.options ? JSON.parse(f.options) : []; } catch {}
+    if (want && opts.length) {
+      const hit = opts.find((o) => String(o).trim().toLowerCase() === want.toLowerCase());
+      if (!hit) return Response.json({ error: `"${want}" isn't one of the jersey sizes (${opts.join(", ")}).` });
+      // Choosing the size here is a staff member confirming it on-site, which
+      // is exactly what the press rule means by "confirmed at check-in". Same
+      // stamp the kiosk writes, so the two paths can't disagree.
+      const stamp = new Date().toISOString().slice(0, 19);
+      const res = updateRecord(Number(b.player_id),
+        { jersey_size: hit, size_confirmed_at: stamp, size_confirmed_by: getActor() },
+        "user(check-in)", "confirmed jersey size at check-in");
+      return Response.json(res.error ? { error: res.error } : { status: "ok", size: hit, size_confirmed_at: stamp });
+    }
+    // Cleared the size — the confirmation goes with it. A confirmation with no
+    // size behind it is the kind of half-truth that gets a jersey misprinted.
+    const res = updateRecord(Number(b.player_id),
+      { jersey_size: "", size_confirmed_at: "", size_confirmed_by: "" },
+      "user(check-in)", "cleared jersey size at check-in");
+    return Response.json(res.error ? { error: res.error } : { status: "ok", size: "", size_confirmed_at: "" });
+  }
   if (b.action === "set_jersey") {
     const res = updateRecord(Number(b.player_id), { jersey_issued: !!b.issued });
     return Response.json(res.error ? { error: res.error } : { status: "ok", issued: !!b.issued });

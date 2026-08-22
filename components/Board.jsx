@@ -305,12 +305,17 @@ export default function Board({ go }) {
 
         {/* RIGHT — info panel down the whole side; fills in when someone checks in */}
         <aside className="board-side">
-          <div className="card" style={{ marginBottom: 0 }}>
+          <div className="card board-side-card" style={{ marginBottom: 0 }}>
             <h2 style={{ marginTop: 0, marginBottom: 4 }}>Check-in details</h2>
             <div className="muted small">Check someone in (left) or scan above — their status, team, coach, jersey and notes show here.</div>
-            {result
-              ? <ScanPanel key={result.player.id} data={result} week={week} onSaved={load} onClear={() => setResult(null)} />
-              : <div className="muted small board-empty">No one checked in yet. Use the check-in box on the left and their day shows here.</div>}
+            {/* The panel is taller than the window on a laptop, so the notes box
+                and the Check out button used to be below the fold with no way
+                to reach them. The header stays put; everything under it scrolls. */}
+            <div className="board-side-scroll">
+              {result
+                ? <ScanPanel key={result.player.id} data={result} week={week} fields={data.fields || []} onSaved={load} onClear={() => setResult(null)} />
+                : <div className="muted small board-empty">No one checked in yet. Use the check-in box on the left and their day shows here.</div>}
+            </div>
           </div>
         </aside>
       </div>
@@ -333,16 +338,38 @@ export default function Board({ go }) {
 }
 
 // Inline staff check-in detail shown in the right-hand panel.
-function ScanPanel({ data, week, onSaved, onClear }) {
+function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
   const [notes, setNotes] = useState(data.notes || "");
   const [saved, setSaved] = useState(false);
   const [issued, setIssued] = useState(!!data.jerseyIssued);
+  const [size, setSize] = useState(data.jerseySize || "");
+  const [confirmedAt, setConfirmedAt] = useState(data.sizeConfirmedAt || "");
+  const [sizeErr, setSizeErr] = useState("");
   const [present, setPresent] = useState(data.status !== "checked_out");
   const p = data.player;
+  // The sizes the league actually stocks, from the field itself.
+  let sizeOpts = [];
+  try {
+    const f = fields.find((x) => x.name === "jersey_size");
+    sizeOpts = f && f.options ? (typeof f.options === "string" ? JSON.parse(f.options) : f.options) : [];
+  } catch { sizeOpts = []; }
   // keep the checklist live as the jersey checkbox toggles
-  const issues = (data.issues || []).filter((i) => i !== "Jersey not issued").concat(issued ? [] : ["Jersey not issued"]);
+  // Keep the checklist live as the jersey checkbox and the size change — the
+  // whole point of editing here is that the red item goes away in front of you.
+  const issues = (data.issues || [])
+    .filter((i) => i !== "Jersey not issued" && i !== "No jersey size")
+    .concat(size ? [] : ["No jersey size"])
+    .concat(issued ? [] : ["Jersey not issued"]);
   async function saveNote() { await api.boardNote({ player_id: p.id, notes }); setSaved(true); onSaved && onSaved(); setTimeout(() => setSaved(false), 1500); }
   async function toggleJersey(v) { setIssued(v); await api.boardSetJersey(p.id, v); onSaved && onSaved(); }
+  async function changeSize(v) {
+    const prev = size;
+    setSize(v); setSizeErr("");
+    const res = await api.boardSetJerseySize(p.id, v);
+    if (res && res.error) { setSize(prev); setSizeErr(res.error); return; }
+    setConfirmedAt(res.size_confirmed_at || "");
+    onSaved && onSaved();
+  }
   async function togglePresent() { const np = !present; setPresent(np); await api.boardToggle({ player_id: p.id, player: p.name, week, present: np }); onSaved && onSaved(); }
 
   return (
@@ -373,10 +400,29 @@ function ScanPanel({ data, week, onSaved, onClear }) {
 
       <div className="kr-cell" style={{ marginBottom: 12 }}>
         <div className="kr-label">Jersey distribution</div>
-        <label className="small" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+          <span className="small">Size</span>
+          {sizeOpts.length ? (
+            <select value={size} onChange={(e) => changeSize(e.target.value)} style={{ width: "auto", minWidth: 92 }}>
+              <option value="">— not set —</option>
+              {sizeOpts.map((o) => <option key={o} value={o}>{o}</option>)}
+              {size && !sizeOpts.includes(size) && <option value={size}>{size}</option>}
+            </select>
+          ) : (
+            <input value={size} onChange={(e) => setSize(e.target.value)} onBlur={(e) => changeSize(e.target.value)}
+              placeholder="e.g. YL" style={{ width: 100 }} />
+          )}
+          <span className="muted small">{confirmedAt ? `confirmed ✓ ${String(confirmedAt).slice(0, 10)}` : "picking a size confirms it"}</span>
+        </div>
+        {sizeErr && <div className="muted small" style={{ color: "var(--bad, #c0392b)", marginTop: 4 }}>{sizeErr}</div>}
+        <label className="small" style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
           <input type="checkbox" style={{ width: "auto" }} checked={issued} onChange={(e) => toggleJersey(e.target.checked)} />
-          {data.jerseySize ? `Size ${data.jerseySize} — ` : "No size set — "}{issued ? "issued ✓" : "not issued yet"}
+          {size ? `Size ${size} — ` : "No size set — "}{issued ? "issued ✓" : "not issued yet"}
         </label>
+        <div className="muted small" style={{ marginTop: 6 }}>
+          Press clearance needs both: the size confirmed here <i>and</i> the jersey issued —
+          plus at least one of the first two weeks attended.
+        </div>
       </div>
 
       <div style={{ marginBottom: 12 }}>

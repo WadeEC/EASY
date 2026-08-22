@@ -247,6 +247,11 @@ pre.diff .add{color:#9be58b}.pre .del{color:#ff9a9a}
 .board-split{display:flex;gap:18px;align-items:flex-start}
 .board-main{flex:2;min-width:0}
 .board-side{flex:1;min-width:300px;position:sticky;top:18px}
+/* The details panel is sticky, so it must never be taller than the window —
+   otherwise the notes box and the buttons sit below the fold, unreachable.
+   The heading stays; the body scrolls inside the card. */
+.board-side-card{display:flex;flex-direction:column;max-height:calc(100vh - 36px)}
+.board-side-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-right:4px;margin-right:-4px}
 .board-side .board-empty{display:block;margin-top:14px;padding:18px;border:1px dashed var(--line);border-radius:var(--radius-sm);text-align:center;background:var(--bg)}
 /* staff check-in status: green = clear, red = needs attention */
 .sdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}
@@ -298,7 +303,10 @@ pre.diff .add{color:#9be58b}.pre .del{color:#ff9a9a}
 .raffle-spot.rolling{background:var(--brand-soft);border-color:var(--brand)}
 .raffle-name{font-size:30px;font-weight:800;line-height:1.1;margin:4px 0}
 .raffle-spot.win .raffle-name{color:var(--good)}
-@media(max-width:980px){.board-split{flex-direction:column}.board-side{position:static;width:100%;min-width:0}}
+@media(max-width:980px){.board-split{flex-direction:column}.board-side{position:static;width:100%;min-width:0}
+  /* Stacked on a phone the page itself scrolls — a second scroller inside it
+     is a trap, so let the card grow. */
+  .board-side-card{max-height:none}.board-side-scroll{overflow:visible}}
 .rule-row{display:flex;align-items:center;gap:13px;padding:11px 14px;border:1px solid var(--line);border-radius:var(--radius-sm);background:#fff;transition:.12s}
 .rule-row:hover{border-color:#cfd3e3;box-shadow:var(--shadow-sm)}
 .rule-row.off{background:var(--bg)}

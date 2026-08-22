@@ -24,6 +24,7 @@ export default function Unassigned({ go, refresh, onAsk }) {
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState(null);
   const [ask, setAsk] = useState("");
+  const [placePreview, setPlacePreview] = useState(null);   // the plan, before anything moves
 
   async function load() {
     const d = await api.unassigned();
@@ -76,6 +77,38 @@ export default function Unassigned({ go, refresh, onAsk }) {
     await load();
   }
 
+  // Late arrivals. Preview first, always — the point of this button is that it
+  // does NOT rebuild the teams, and you should be able to see that before it
+  // runs.
+  async function previewPlacement() {
+    setBusy(true); setFlash(null);
+    const res = await api.unassignedPlace({
+      ids: sel.size ? [...sel] : null,
+      dry_run: true,
+    });
+    setBusy(false);
+    if (res.error) { setPlacePreview(null); setFlash({ bad: true, text: res.error }); return; }
+    setPlacePreview(res);
+  }
+
+  async function confirmPlacement() {
+    setBusy(true);
+    const res = await api.unassignedPlace({
+      ids: sel.size ? [...sel] : null,
+      dry_run: false,
+    });
+    setBusy(false);
+    setPlacePreview(null);
+    if (res.error) { setFlash({ bad: true, text: res.error }); return; }
+    setFlash({
+      bad: (res.blocked || 0) > 0,
+      text: `Placed ${res.placed} onto existing teams${res.blocked ? ` · ${res.blocked} blocked: ${res.blocked_details?.[0]?.reason || ""}` : ""}${res.skipped?.length ? ` · ${res.skipped.length} had no matching team` : ""}. Nobody already on a team was moved.`,
+    });
+    setSel(new Set());
+    await load();
+    refresh && refresh();
+  }
+
   return (
     <div>
       <div className="page-head">
@@ -117,6 +150,12 @@ export default function Unassigned({ go, refresh, onAsk }) {
                 {bucket === "no_division" && (
                   <button className="btn sm" disabled={busy} onClick={autoDivision}>Re-sort by age</button>
                 )}
+                {bucket === "no_team" && (
+                  <button className="btn sm" disabled={busy} onClick={previewPlacement}
+                    title="Fill seats on the teams that already exist. Nobody already on a team is moved.">
+                    {busy ? "Working…" : sel.size ? `Add ${sel.size} to existing teams` : "Add all to existing teams"}
+                  </button>
+                )}
               </div>
               <span className="muted small">{sel.size} selected</span>
             </div>
@@ -148,6 +187,76 @@ export default function Unassigned({ go, refresh, onAsk }) {
               </div>
             </div>
           </div>
+
+          {placePreview && (
+            <div className="card" style={{ borderLeft: "3px solid var(--brand, #2f6fed)" }}>
+              <div className="between" style={{ alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <h3 style={{ margin: "0 0 4px" }}>
+                    {placePreview.would_place} player{placePreview.would_place === 1 ? "" : "s"} would join existing teams
+                  </h3>
+                  <div className="muted small">
+                    Nothing has changed yet. This only fills seats — no player who already has a team is moved,
+                    so the rosters you&apos;ve already told parents about stay exactly as they are.
+                  </div>
+                </div>
+                <div className="btn-row">
+                  <button className="btn ghost sm" onClick={() => setPlacePreview(null)}>Cancel</button>
+                  <button className="btn primary sm" disabled={busy || !placePreview.would_place} onClick={confirmPlacement}>
+                    {busy ? "Placing…" : `Place ${placePreview.would_place}`}
+                  </button>
+                </div>
+              </div>
+
+              {placePreview.skipped?.length > 0 && (
+                <p className="muted small" style={{ marginTop: 8 }}>
+                  <b>{placePreview.skipped.length} can&apos;t be placed:</b>{" "}
+                  {placePreview.skipped.slice(0, 3).map((x) => `${x.name} — ${x.reason}`).join("; ")}
+                  {placePreview.skipped.length > 3 ? ` … and ${placePreview.skipped.length - 3} more` : ""}
+                </p>
+              )}
+
+              <div className="grid cols-2" style={{ marginTop: 10 }}>
+                <div>
+                  <div className="fld"><label>Who goes where</label></div>
+                  <table className="tbl">
+                    <thead><tr><th>Player</th><th>Age</th><th>Team</th><th>Why</th></tr></thead>
+                    <tbody>
+                      {placePreview.placements.slice(0, 40).map((p) => (
+                        <tr key={p.id}>
+                          <td>{p.name}</td><td>{p.age ?? "—"}</td>
+                          <td><b>{p.team}</b></td>
+                          <td className="muted small">{p.why}{p.over_cap ? " ⚠︎ over cap" : ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {placePreview.placements.length > 40 && (
+                    <div className="muted small">…and {placePreview.placements.length - 40} more.</div>
+                  )}
+                </div>
+                <div>
+                  <div className="fld"><label>Roster sizes</label></div>
+                  <table className="tbl">
+                    <thead><tr><th>Team</th><th>Now</th><th>After</th></tr></thead>
+                    <tbody>
+                      {placePreview.teams_after.map((t) => {
+                        const b = placePreview.teams_before.find((x) => x.team === t.team);
+                        const delta = t.size - (b?.size ?? 0);
+                        return (
+                          <tr key={t.team}>
+                            <td>{t.team}</td>
+                            <td className="muted">{b?.size ?? 0}</td>
+                            <td>{t.size}{delta ? <span className="muted small"> (+{delta})</span> : null}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
 
           <table className="tbl">
             <thead>

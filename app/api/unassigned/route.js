@@ -11,9 +11,12 @@
 //   GET  /api/unassigned?season=Fall%202026
 //   POST { action:"assign", ids, league?, division?, team? }
 //   POST { action:"auto_division" }     → re-sort by age into this season's divisions
+//   POST { action:"place_on_teams", league?, division?, ids?, max_size?, dry_run }
+//        → seat players who have no team onto the teams that already exist,
+//          without moving anyone who is already on one
 import { bindRequest } from "@/lib/actor.js";
 import { unassignedFor } from "@/lib/seasons.js";
-import { bulkMovePlayers, getDivisions, getLeagueLocks, reassignDivisions } from "@/lib/tools.js";
+import { bulkMovePlayers, getDivisions, getLeagueLocks, reassignDivisions, placeUnassignedPlayers } from "@/lib/tools.js";
 import { currentScope, scopeLabel } from "@/lib/season-scope.js";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +48,18 @@ export async function POST(req) {
     if (!Object.keys(changes).length) return Response.json({ error: "Nothing to change." });
     const res = bulkMovePlayers(ids, changes, "set");
     return Response.json({ ...res, remaining: unassignedFor().counts });
+  }
+
+  // Late arrivals onto the teams that already exist. Preview by default;
+  // nobody who already has a team is touched either way.
+  if (b.action === "place_on_teams") {
+    const res = placeUnassignedPlayers({
+      league: b.league || null, division: b.division || null,
+      ids: Array.isArray(b.ids) ? b.ids.map(Number).filter(Boolean) : null,
+      max_size: b.max_size ?? null,
+      dry_run: b.dry_run !== false,
+    });
+    return Response.json(res.error ? res : { ...res, remaining: unassignedFor().counts });
   }
 
   if (b.action === "auto_division") {

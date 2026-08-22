@@ -166,6 +166,7 @@ function PressQueueCard() {
   const MISSING_LABEL = {
     size_confirmed: "size not confirmed",
     first_weeks_attendance: "missed first two weeks",
+    jersey_issued: "jersey not issued",
     season_started: "season hasn't started",
   };
 
@@ -203,7 +204,7 @@ function PressQueueCard() {
         <h2 style={{ margin: 0 }}>Jersey press queue</h2>
         <div className="muted small">First two weeks: {data.firstWeeks?.length ? data.firstWeeks.join(", ") : "(season not set)"}</div>
       </div>
-      <p className="muted small">A player is auto-cleared once their <b>size is confirmed</b> at check-in AND they've <b>attended at least one of the first two weeks</b>. Force-clear or hold individuals as needed.</p>
+      <p className="muted small">A player is auto-cleared once their <b>size is confirmed</b> at check-in, the <b>jersey has been issued</b>, AND they've <b>attended at least one of the first two weeks</b>. Force-clear or hold individuals as needed.</p>
       <div className="btn-row" style={{ marginBottom: 10 }}>
         <button className={"pill" + (tab === "waiting" ? " active" : "")} onClick={() => setTab("waiting")}>Waiting ({data.waiting.length})</button>
         <button className={"pill" + (tab === "cleared" ? " active" : "")} onClick={() => setTab("cleared")}>Cleared ({data.cleared.length})</button>

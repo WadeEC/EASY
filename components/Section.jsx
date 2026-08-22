@@ -16,6 +16,10 @@ export default function Section({ type, label, refresh, onAsk }) {
   const [tab, setTab] = useState("list");
   const [flash, setFlash] = useState(null);
   const [reassigning, setReassigning] = useState(false);
+  // The age brackets themselves. Grouping the roster needs them, because a
+  // division is an age RANGE, not whatever string is sitting in the field.
+  const [divisions, setDivisions] = useState([]);
+  const [sortingDivs, setSortingDivs] = useState(false);
 
   // Re-evaluate assignment rules across every record of this section. Same
   // endpoint the Leagues & Assignment page uses; surfaced here too so users
@@ -52,10 +56,33 @@ export default function Section({ type, label, refresh, onAsk }) {
       const pr = await api.records("player");
       setPlayerNames((pr.records || []).map((x) => { try { return x.name || JSON.parse(x.data || "{}").full_name || ""; } catch { return x.name || ""; } }).filter(Boolean));
     } catch { setPlayerNames([]); }
+    if ((s.fields || []).some((f) => f.name === "division")) {
+      try {
+        const dr = await api.records("division");
+        setDivisions((dr.records || []).map((x) => {
+          let d = {}; try { d = JSON.parse(x.data || "{}"); } catch {}
+          return { id: x.id, name: x.name || d.name || `#${x.id}`, league: d.league || "", age_min: d.age_min, age_max: d.age_max };
+        }));
+      } catch { setDivisions([]); }
+    } else setDivisions([]);
+  }
+
+  // Re-sort everyone into the bracket their age falls in, and clear the ones
+  // that don't land in any. Same endpoint the Divisions settings page uses.
+  async function sortIntoDivisions() {
+    if (sortingDivs) return;
+    setSortingDivs(true); setFlash(null);
+    try {
+      const res = await api.divisionsReassign();
+      if (res && res.error) { setFlash({ ok: false, text: res.error }); return; }
+      const n = res?.updated || 0;
+      setFlash({ ok: true, text: n ? `Re-sorted ${n} player${n === 1 ? "" : "s"} into their age bracket.` : "Everyone is already in the right bracket." });
+      await reload(); refresh && refresh();
+    } finally { setSortingDivs(false); }
   }
   useEffect(() => { setTab("list"); setFlash(null); reload(); /* eslint-disable-next-line */ }, [type]);
 
-  const ctx = { type, fields, L, reload, refresh, setFlash, playerNames };
+  const ctx = { type, fields, L, reload, refresh, setFlash, playerNames, divisions, sortIntoDivisions, sortingDivs };
 
   // Show Reassign for sections whose schema has a `league` field — that's where
   // assignment rules apply (today: player). Avoids a useless button on Coaches /
@@ -148,7 +175,7 @@ const INTERNAL_FIELDS_BY_TYPE = {
   ]),
 };
 
-function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNames }) {
+function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNames, divisions = [], sortIntoDivisions, sortingDivs = false }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState("");
   const [vals, setVals] = useState({});
@@ -372,10 +399,62 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
   const active = activeLg && groups[activeLg] ? activeLg : (toggle.find((lg) => (groups[lg] || []).length) || toggle[0]);
   const list = active ? (groups[active] || []) : [];
 
-  const byDivision = (arr) => {
-    const by = {};
-    for (const r of arr) { const dv = String(dataOf(r).division || "").trim() || "No division"; (by[dv] = by[dv] || []).push(r); }
-    return Object.entries(by).sort((a, b) => (a[0] === "No division" ? 1 : b[0] === "No division" ? -1 : a[0].localeCompare(b[0])));
+  // ---------------------------------------------------------------- divisions
+  //
+  // A division is an AGE RANGE you defined — "Ages 9-10", 9 to 10. The roster
+  // used to be grouped by whatever string happened to be in the division
+  // field, and uploads put a bare age in there (a column called "Group" or
+  // "Age Group"), so the page showed a card per age: "10 · 32", "11 · 28".
+  //
+  // Now a player lands in the bracket their age falls into. A division that
+  // was set deliberately still wins — but only if it names a bracket that
+  // really exists this season, so a stray "10" can't masquerade as one.
+  const norm = (x) => String(x == null ? "" : x).trim().toLowerCase().replace(/\s+/g, " ");
+  const divsByName = new Map(divisions.map((d) => [norm(d.name), d]));
+  const bound = (v, fallback) => (v === "" || v == null ? fallback : Number(v));
+
+  // Brackets that apply to this league — a division with no league set is
+  // league-wide — ordered youngest first, which is how a roster reads.
+  const bracketsFor = (lg) => divisions
+    .filter((d) => !d.league || d.league === lg)
+    .slice()
+    .sort((a, b) => bound(a.age_min, -Infinity) - bound(b.age_min, -Infinity) || bound(a.age_max, Infinity) - bound(b.age_max, Infinity));
+
+  const bracketFor = (age, lg) => {
+    const n = Number(age);
+    if (!Number.isFinite(n) || String(age).trim() === "") return null;
+    return bracketsFor(lg).find((d) => n >= bound(d.age_min, -Infinity) && n <= bound(d.age_max, Infinity)) || null;
+  };
+
+  const NO_AGE = "No age on file";
+  const OUTSIDE = "Outside every age range";
+
+  // Returns [label, members][] in bracket order, leftovers last.
+  const byDivision = (arr, lg) => {
+    const brackets = bracketsFor(lg);
+    const order = new Map(brackets.map((d, i) => [d.name, i]));
+    const by = new Map();
+    const push = (k, r) => { const a = by.get(k) || []; a.push(r); by.set(k, a); };
+
+    for (const r of arr) {
+      const d = dataOf(r);
+      // A deliberately-set division wins — if it's a real bracket.
+      const stated = divsByName.get(norm(d.division));
+      if (stated) { push(stated.name, r); continue; }
+      if (!brackets.length) { push("All players", r); continue; }
+      const b = bracketFor(d.age, lg);
+      if (b) push(b.name, r);
+      else if (d.age === "" || d.age == null) push(NO_AGE, r);
+      else push(`${OUTSIDE} (age ${d.age})`, r);
+    }
+
+    const rank = (k) => {
+      if (order.has(k)) return order.get(k);
+      if (k === "All players") return -1;
+      if (k === NO_AGE) return 9998;
+      return 9999; // "Outside every age range (…)"
+    };
+    return [...by.entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]));
   };
   async function openMove(r) {
     const d = dataOf(r);
@@ -592,12 +671,42 @@ function ListTab({ type, fields, L, records, reload, refresh, setFlash, playerNa
             </div>
             {!list.length && <div className="card"><p className="muted" style={{ margin: 0 }}>No {plural(L).toLowerCase()} in {active} yet.</p></div>}
             {hasDivision
-              ? byDivision(list).map(([dv, members]) => (
-                <div className="card" key={dv} style={{ padding: 0, overflow: "auto", marginBottom: 12 }}>
-                  <div style={{ padding: "10px 14px", fontWeight: 700, borderBottom: "1px solid var(--line)" }}>{dv} <span className="muted small">· {members.length}</span></div>
-                  {tableFor(members)}
-                </div>
-              ))
+              ? (() => {
+                const brackets = bracketsFor(active);
+                const rows = byDivision(list, active);
+                return (
+                  <>
+                    {!brackets.length && list.length > 0 && (
+                      <div className="card" style={{ marginBottom: 12, borderLeft: "3px solid var(--warn, #d98324)" }}>
+                        <b>No age brackets for {active} yet.</b>
+                        <div className="muted small" style={{ marginTop: 4 }}>
+                          Divisions are age ranges — &ldquo;Ages 9-10&rdquo;, 9 to 10. Set them up in
+                          Season → Divisions and everyone here sorts into one automatically.
+                        </div>
+                      </div>
+                    )}
+                    {brackets.length > 0 && (
+                      <div className="muted small" style={{ margin: "0 0 8px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <span>
+                          Grouped by age bracket: {brackets.map((d) => `${d.name} (${bound(d.age_min, "–")}–${bound(d.age_max, "–")})`).join(" · ")}
+                        </span>
+                        <button className="btn ghost sm" onClick={sortIntoDivisions} disabled={sortingDivs}
+                          title="Re-run the age brackets over every player">
+                          {sortingDivs ? "Sorting…" : "Re-sort into brackets"}
+                        </button>
+                      </div>
+                    )}
+                    {rows.map(([dv, members]) => (
+                      <div className="card" key={dv} style={{ padding: 0, overflow: "auto", marginBottom: 12 }}>
+                        <div style={{ padding: "10px 14px", fontWeight: 700, borderBottom: "1px solid var(--line)" }}>
+                          {dv} <span className="muted small">· {members.length}</span>
+                        </div>
+                        {tableFor(members)}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()
               : (list.length > 0 && <div className="card" style={{ padding: 0, overflow: "auto", marginBottom: 12 }}>{tableFor(list)}</div>)}
           </>
         )
@@ -810,7 +919,9 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
     if (!file) return;
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
-      const wb = XLSX.read(buf, { type: "array" });
+      // cellDates: a date cell becomes a real Date instead of the serial number
+      // 40807, which is what put "42464" in the Birth Date column.
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
       // Use AOA so banner rows (Activity:, Season:, Catalog: …) above the real headers get skipped.
       const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
@@ -1086,6 +1197,7 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
           </div>
           <div className="btn-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
             <span className="chip good">Newly added: {importSummary.added}</span>
+            <span className="chip">Rows read: {(importSummary.added || 0) + (importSummary.recognized || 0) + (importSummary.ambiguous?.length || 0) + (importSummary.skipped?.length || 0)}</span>
             <span className="chip">Already in system: {importSummary.recognized}</span>
             {importSummary.ambiguous?.length > 0 && <span className="chip brand">Needs review: {importSummary.ambiguous.length}</span>}
             {importSummary.skipped?.length > 0 && <span className="chip">Problems: {importSummary.skipped.length}</span>}
@@ -1132,6 +1244,24 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
               </ul>
             </details>
           )}
+          {/* Where the new players landed. Without this, "Imported 42" next to a
+              league pill reading 35 looks like seven rows went missing. */}
+          {importSummary.addedNames?.length > 0 && (() => {
+            const by = {};
+            for (const a of importSummary.addedNames) {
+              const k = a.league || "No league yet";
+              by[k] = (by[k] || 0) + 1;
+            }
+            const rows = Object.entries(by).sort((x, y) => y[1] - x[1]);
+            if (rows.length < 2 && rows[0]?.[0] !== "No league yet") return null;
+            return (
+              <div className="muted small" style={{ marginTop: 6 }}>
+                Landed in: {rows.map(([k, v]) => `${v} → ${k}`).join(" · ")}.
+                {by["No league yet"] ? " The ones with no league are on the Unassigned page." : ""}
+              </div>
+            );
+          })()}
+
           {importSummary.recognizedNames?.length > 0 && (
             <details style={{ marginTop: 8 }}>
               <summary className="muted small">{importSummary.recognizedNames.length} already in system — click to see names</summary>
@@ -1393,6 +1523,7 @@ function PressClearanceModal({ recordName, status, overrideKind, overrideReason,
     : (overrideKind ? !status?.missing?.length : !!status?.cleared);
   const missing = status?.missing || [];
   const sizeOk = !missing.includes("size_confirmed");
+  const issuedOk = !missing.includes("jersey_issued");
   const firstWeeksOk = !missing.includes("first_weeks_attendance");
   const seasonStarted = !missing.includes("season_started");
 
@@ -1438,6 +1569,7 @@ function PressClearanceModal({ recordName, status, overrideKind, overrideReason,
       <div className="card" style={{ background: "var(--line-soft, #f6f6fa)", padding: "8px 12px", marginBottom: 14 }}>
         <div className="muted small" style={{ marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em" }}>Requirements (auto-rule)</div>
         <RuleRow ok={sizeOk} label="Size confirmed at check-in" detail="A staff member confirmed the jersey size when the player checked in." />
+        <RuleRow ok={issuedOk} label="Jersey issued" detail="The shirt is actually in their hands — a size on a screen isn't confirmation until it fits." />
         <RuleRow ok={firstWeeksOk && seasonStarted} label="Attended at least one of the first two weeks"
           detail={seasonStarted ? "Catches no-shows before the league prints a custom jersey for them." : "Season hasn't started — this requirement isn't evaluated yet."} />
       </div>

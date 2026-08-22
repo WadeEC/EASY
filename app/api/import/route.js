@@ -1,10 +1,13 @@
-import { getFields, getRecords, getRecordsForSeason, getRecordsAll, applyCreateRecord, validateRecord, identityKey, findAmbiguousMatches, slug, writeMasterRow, coerceSelectValue } from "@/lib/tools.js";
+import { getFields, getRecords, getRecordsForSeason, getRecordsAll, applyCreateRecord, validateRecord, identityKey, findAmbiguousMatches, slug, writeMasterRow, coerceSelectValue, isKnownDivision } from "@/lib/tools.js";
 import { setScope, assertWritable } from "@/lib/season-scope.js";
 import { bindRequest } from "@/lib/actor.js";
+import { coerceDate, isDateColumn } from "@/lib/import-helpers.js";
 
 export const dynamic = "force-dynamic";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
+const hasVal = (v) => v != null && String(v).trim() !== "";
+const divisionOk = (v) => { try { return isKnownDivision(v); } catch { return true; } };
 
 // Body: {
 //   type, rows: [{col: val}], mapping: {fieldName: csvCol}, source: "Limerick"|null,
@@ -72,7 +75,17 @@ export async function POST(req) {
       const col = mapping[f.name];
       if (col && col !== "(skip)" && row[col] != null && row[col] !== "") {
         let v = row[col];
-        if (f.data_type === "number") {
+        // Dates first: a date column holding 42464 is 2016-04-04, not the
+        // number forty-two thousand. Checked before `number` so a date mapped
+        // onto a numeric field can't be stored as a serial.
+        if (f.data_type === "date" || isDateColumn(col) || isDateColumn(f.name)) {
+          const c = coerceDate(v);
+          if (c.value != null) v = c.value;
+          else {
+            if (c.unmatched) unmatched.push({ rowIndex: n + 1, name: row[mapping.full_name || "Full Name"] || `row ${n + 1}`, field: f.label || f.name, value: c.unmatched, why: "not a date we recognise" });
+            continue;
+          }
+        } else if (f.data_type === "number") {
           const num = parseFloat(v);
           if (!Number.isNaN(num)) v = num;
         } else if (f.data_type === "select" && selectOpts.has(f.name)) {
@@ -91,6 +104,9 @@ export async function POST(req) {
     }
     if (source) data.township = source;
     if (season) data.season = season;
+    // Remember what the sheet called the division so we can report it if the
+    // brackets end up ignoring it (applyCreateRecord drops unknown values).
+    const incomingDivision = hasVal(data.division) ? String(data.division).trim() : null;
 
     const displayName = data.full_name || data.name || `(row ${n + 1})`;
     const key = identityKey(data);
@@ -133,7 +149,13 @@ export async function POST(req) {
     const res = applyCreateRecord(rtype, displayName, data, "user(import)");
     if (res && res.error) { skipped.push(`Row ${n + 1} (${displayName}): ${res.error}`); return; }
     added++;
-    addedNames.push({ id: res?.id || null, name: displayName, rowIndex: n + 1 });
+    if (incomingDivision && !divisionOk(incomingDivision)) {
+      unmatched.push({ rowIndex: n + 1, name: displayName, field: "Division", value: incomingDivision, why: "not a division in this season — sorted by age bracket instead" });
+    }
+    // Where they landed, so the import report can show the split. "Imported 42"
+    // with 35 visible under one league is not a bug, but it looks like one
+    // until something says the other 7 went to Unassigned.
+    addedNames.push({ id: res?.id || null, name: displayName, rowIndex: n + 1, league: data.league || "", division: data.division || "", team: data.team || "" });
     if (key) { seenKeys.add(key); existingByKey.set(key, { id: res?.id || null, name: displayName }); }
     try {
       const wasAmbiguousOverride = allowAmbiguous.has(n + 1);

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { api, currentSeason } from "@/lib/api.js";
+import { displayCell } from "@/lib/import-helpers.js";
 import ExportBar from "./ExportBar.jsx";
 
 // Master Spreadsheet view — every row the league has ever imported, including
@@ -112,10 +113,9 @@ export default function MasterSpreadsheet() {
       const ts = Number(row.imported_at);
       return ts ? new Date(ts).toISOString().slice(0, 10) : "";
     }
-    const v = row.data?.[header];
-    if (v == null) return "";
-    if (typeof v === "object") return JSON.stringify(v);
-    return String(v);
+    // Date columns arrive from Excel as serials — "Date of Birth": 40807.
+    // displayCell turns those into 2011-09-30 and leaves everything else alone.
+    return displayCell(header, row.data?.[header]);
   }
 
   const headerLabel = (h) => h.startsWith("_") ? h.slice(1).replace(/_/g, " ") : h;

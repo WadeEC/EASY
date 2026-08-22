@@ -8,6 +8,7 @@ import { readMaster, masterColumns, masterSummary } from "@/lib/tools.js";
 import { bindRequest } from "@/lib/actor.js";
 import { currentScope, scopeLabel, ALL_SEASONS } from "@/lib/season-scope.js";
 import * as XLSX from "xlsx";
+import { displayCell } from "@/lib/import-helpers.js";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,9 @@ function buildRows(o) {
       r.id, r.season || "", r.source_file || "", r.source_district || "", r.source_league || "",
       r.status || "", r.player_id || "", r.identity_key || "", r.imported_at || "", r.imported_by || "",
       r.record_type,
-      ...cols.map((c) => { const v = r.data[c]; return v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : v); }),
+      // Date columns come out of Excel as serials. Convert on the way out so a
+      // downloaded master reads "2011-09-30", not "40807".
+      ...cols.map((c) => displayCell(c, r.data[c])),
     ]);
   }
   return { rows, cols, header, matrix };

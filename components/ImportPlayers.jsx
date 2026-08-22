@@ -49,7 +49,9 @@ export default function ImportPlayers({ onDone, go }) {
     if (!file) return;
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
-      const wb = XLSX.read(buf, { type: "array" });
+      // cellDates: a date cell becomes a real Date instead of the serial number
+      // 40807, which is what put "42464" in the Birth Date column.
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
       // Banner-aware parse: skips title rows above the real header.
       const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
