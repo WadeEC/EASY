@@ -2,8 +2,7 @@ import {
   getRecords, getFields, getRecordTypes, addField, updateRecord,
   createTeamRule, getTeamRules, deleteRule, setRuleActive,
   seedCoaches, getCoaches, setAllStarCap, lowAvailabilitySet,
-  linkData, listLinks, getDivisions,
-} from "@/lib/tools.js";
+  linkData, listLinks, getDivisions, divisionOf,} from "@/lib/tools.js";
 import { buildTeams } from "@/lib/teams.js";
 import { bindRequest } from "@/lib/actor.js";
 import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
@@ -102,8 +101,9 @@ export async function POST(req) {
 
     // A division with no league set applies to every league.
     const brackets = getDivisions().filter((d) => !d.league || !b.league || d.league === b.league);
-    const slices = brackets.map((d) => ({ name: d.name, players: inLeague.filter((p) => (p.division || "") === d.name) }));
-    const noDiv = inLeague.filter((p) => !String(p.division || "").trim());
+    for (const p of inLeague) p.division = divisionOf(p);      // age decides, not the stored string
+    const slices = brackets.map((d) => ({ name: d.name, players: inLeague.filter((p) => p.division === d.name) }));
+    const noDiv = inLeague.filter((p) => !p.division);
     if (noDiv.length) slices.push({ name: "", players: noDiv, unsorted: true });
 
     const outTeams = [], report = [], conflicts = [];
@@ -152,7 +152,8 @@ export async function POST(req) {
     let players = b.league
       ? all.filter((p) => (p.league || "") === b.league || (p.second_league || "") === b.league)
       : all;
-    if (b.division) players = players.filter((p) => (p.division || "") === b.division);
+    for (const p of players) p.division = divisionOf(p);
+    if (b.division) players = players.filter((p) => p.division === b.division);
     const lowSet = lowAvailabilitySet();          // attendance < half the weeks so far
     for (const p of players) p._low = lowSet.has(p.id);
     const allRules = getTeamRules();

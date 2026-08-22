@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api.js";
-import { divisionChoices } from "@/lib/ui.js";
+import { divisionChoices, resolveDivision } from "@/lib/ui.js";
 
 // Sentinel for the Division picker: not a filter, a different build.
 const PER_DIVISION = "__each__";
@@ -207,12 +207,13 @@ export default function TeamBuilder({ go, onAsk }) {
   // it is per-bracket, so the team-count buttons describe the largest bracket
   // rather than pretending 217 kids go into one pool.
   const perDivision = division === PER_DIVISION;
-  const divOpts = divisionChoices(divisions, league, players.map((p) => p.division));
-  const scope = (division && !perDivision) ? players.filter((p) => (p.division || "") === division) : players;
+  const divOpts = divisionChoices(divisions, league);
+  const divOf = (p) => resolveDivision(divisions, p);
+  const scope = (division && !perDivision) ? players.filter((p) => divOf(p) === division) : players;
   const perDivCounts = perDivision
-    ? divOpts.map((o) => ({ name: o.value, n: players.filter((p) => (p.division || "") === o.value).length })).filter((x) => x.n)
+    ? divOpts.map((o) => ({ name: o.value, n: players.filter((p) => divOf(p) === o.value).length })).filter((x) => x.n)
     : [];
-  const noDivCount = perDivision ? players.filter((p) => !String(p.division || "").trim()).length : 0;
+  const noDivCount = perDivision ? players.filter((p) => !divOf(p)).length : 0;
   const evenCount = (n, target) => { let c = Math.max(2, Math.round(n / (target || 10)) || 2); if (c % 2) c++; return c; };
   const autoTeams = evenCount(scope.length, Number(targetSize) || 10);
   const teamOptions = [...new Set([Math.max(2, autoTeams - 2), autoTeams, autoTeams + 2])].filter((c) => c >= 2 && c <= Math.max(2, scope.length || 2));

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api.js";
-import { divisionChoices } from "@/lib/ui.js";
+import { divisionChoices, resolveDivision } from "@/lib/ui.js";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
 
@@ -32,7 +32,7 @@ export default function RankingsPage({ go }) {
     };
     setPlayers(r.records.filter(inScope).map((x) => {
       const d = parse(x.data);
-      return { id: x.id, name: x.name || d.full_name || `#${x.id}`, rank: Number(d.end_season_rank) || 0, team: d.team || "", division: d.division || "", league: d.league || "", season: d.rank_season || "" };
+      return { id: x.id, name: x.name || d.full_name || `#${x.id}`, rank: Number(d.end_season_rank) || 0, team: d.team || "", division: d.division || "", age: d.age, league: d.league || "", season: d.rank_season || "" };
     }));
     try {
       const dv = await api.records("division");
@@ -61,10 +61,11 @@ export default function RankingsPage({ go }) {
 
   const leagues = [...new Set(players.map((p) => p.league).filter(Boolean))].sort();
   // Defined brackets, youngest first — not the distinct strings on players.
-  const divisions = divisionChoices(divRecs, league, players.filter((p) => !league || p.league === league).map((p) => p.division)).map((c) => c.value);
-  const teams = [...new Set(players.filter((p) => (!league || p.league === league) && (!division || p.division === division)).map((p) => p.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const divisions = divisionChoices(divRecs, league).map((c) => c.value);
+  const divOf = (p) => resolveDivision(divRecs, p);
+  const teams = [...new Set(players.filter((p) => (!league || p.league === league) && (!division || divOf(p) === division)).map((p) => p.team).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const shown = players.filter((p) =>
-    (!league || p.league === league) && (!division || p.division === division) && (!team || p.team === team) &&
+    (!league || p.league === league) && (!division || divOf(p) === division) && (!team || p.team === team) &&
     (!q || p.name.toLowerCase().includes(q.toLowerCase()))
   ).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -119,7 +120,7 @@ export default function RankingsPage({ go }) {
             {shown.map((p) => (
               <tr key={p.id}>
                 <td><b>{p.name}</b>{p.season ? <div className="muted small">ranked {p.season}</div> : null}</td>
-                <td>{[p.team, p.division].filter(Boolean).join(" · ") || <span className="muted">—</span>}</td>
+                <td>{[p.team, divOf(p)].filter(Boolean).join(" · ") || <span className="muted">—</span>}</td>
                 <td>
                   <div style={{ display: "flex", gap: 6 }}>
                     {[1, 2, 3, 4, 5].map((v) => (

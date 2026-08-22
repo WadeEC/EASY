@@ -1,4 +1,4 @@
-import { getRecords } from "@/lib/tools.js";
+import { getRecords, divisionOf,} from "@/lib/tools.js";
 import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 import { bindRequest } from "@/lib/actor.js";
 
@@ -36,7 +36,7 @@ function details(p, coaches, games) {
   // that case. Falling back to the league name (e.g. "Sunday Upper Merion")
   // misled players into thinking that was their field.
   return {
-    id: p.id, name: p.name, age: p.age ?? "", division: p.division || "", league: p.league || "",
+    id: p.id, name: p.name, age: p.age ?? "", division: divisionOf(p), league: p.league || "",
     team, coaches: co, field, next,
     jersey_size: p.jersey_size || "",
     jersey_color: jerseyColor,

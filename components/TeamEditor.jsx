@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api.js";
-import { divisionChoices } from "@/lib/ui.js";
+import { divisionChoices, resolveDivision } from "@/lib/ui.js";
 import FieldInput from "./FieldInput.jsx";
 
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -53,8 +53,11 @@ export default function TeamEditor({ go, onAsk }) {
   // Defined brackets first, youngest first. Anything on a player that isn't a
   // real bracket is still offered — otherwise those players are unreachable —
   // but flagged, because it needs cleaning up rather than picking.
-  const divChoices = divisionChoices(divisions, league, (players || []).filter((p) => p.league === league).map((p) => p.division));
+  const divChoices = divisionChoices(divisions, league);
   const divOptions = divChoices.map((c) => c.value);
+  // A player is in a bracket because of their AGE — not because of whatever
+  // string is in their division field.
+  const divOf = (p) => resolveDivision(divisions, p);
 
   // The filters are required (no "All" option), so once data lands we anchor on the
   // first available league and the first division within that league. Re-anchor if
@@ -69,7 +72,7 @@ export default function TeamEditor({ go, onAsk }) {
 
   if (players === undefined || players?.error) return <div className="muted">Loading…</div>;
 
-  const scoped = players.filter((p) => p.league === league && p.division === division);
+  const scoped = players.filter((p) => p.league === league && divOf(p) === division);
 
   const units = {};
   for (const p of scoped) { if (!p.team) continue; (units[p.team] = units[p.team] || []).push(p); }
@@ -119,7 +122,7 @@ export default function TeamEditor({ go, onAsk }) {
             <div key={p.id} className={"drag-item" + (p.data.link_group ? " linked" : "")} draggable
               onDragStart={() => { dragId.current = p.id; }} onClick={() => openEdit(p)} title="Click to view & edit">
               <span>{p.name}
-                {p.division ? <span className="muted small"> · {p.division}</span> : null}
+                {divOf(p) ? <span className="muted small"> · {divOf(p)}</span> : null}
                 {p.data.link_group ? <span className="linkpill">{p.data.link_group}</span> : null}
                 {p.data.all_star ? <span className="starpill">all-star</span> : null}
                 {lowSet.has(p.id) ? <span className="muted small"> · low att</span> : null}

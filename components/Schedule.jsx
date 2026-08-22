@@ -253,7 +253,38 @@ export default function Schedule({ go, onAsk, startRef }) {
   const allEffectiveTeams = [...includedRoster, ...guestTeams.filter((g) => !includedRoster.includes(g))];
   // Divisions present in the build set — parsed from the "Division / Team" name
   // prefix. Drives the per-division start-time inputs.
-  const divisionsInBuild = [...new Set(allEffectiveTeams.map((t) => { const i = String(t).indexOf(" / "); return i > 0 ? t.slice(0, i) : ""; }).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  // Which brackets this build covers, and which teams are in each.
+  //
+  // The division of a team comes from WHO IS ON IT — the server works it out
+  // from the players' ages (byDivision) — with the name prefix only as a
+  // fallback for guest teams typed in by hand. Teams built before divisions
+  // existed are just "Team 7", and reading the name alone put them all in one
+  // bracket-less pool, which is how a schedule paired eight-year-olds with
+  // fifteens.
+  const byDivisionMap = (() => {
+    const src = (cfg && cfg.byDivision && cfg.byDivision[league]) || null;
+    const m = new Map();
+    if (src) for (const g of src.divisions || []) for (const t of g.teams) m.set(t, g.division);
+    return m;
+  })();
+  const divisionOfTeam = (t) => {
+    if (byDivisionMap.has(t)) return byDivisionMap.get(t);
+    const i = String(t).indexOf(" / ");
+    return i > 0 ? String(t).slice(0, i) : "";
+  };
+  const teamsByDivision = (() => {
+    const m = new Map();
+    for (const t of allEffectiveTeams) {
+      const dv = divisionOfTeam(t);
+      if (!dv) continue;
+      if (!m.has(dv)) m.set(dv, []);
+      m.get(dv).push(t);
+    }
+    return m;
+  })();
+  const noDivisionTeams = allEffectiveTeams.filter((t) => !divisionOfTeam(t));
+  const divisionsInBuild = [...teamsByDivision.keys()].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const soloDivisions = divisionsInBuild.filter((d) => (teamsByDivision.get(d) || []).length < 2);
   const baseRounds = allEffectiveTeams.length < 2 ? 0 : (allEffectiveTeams.length % 2 === 0 ? allEffectiveTeams.length - 1 : allEffectiveTeams.length);
   const autoWeeks = baseRounds ? Math.ceil(baseRounds / Math.max(1, gamesPerDay)) : 0;
 
@@ -590,6 +621,37 @@ export default function Schedule({ go, onAsk, startRef }) {
                       ? `${teamStats.length} team${teamStats.length === 1 ? "" : "s"} on the ${league} roster${divisionsInBuild.length ? ` across ${divisionsInBuild.length} division${divisionsInBuild.length === 1 ? "" : "s"}` : ""}.`
                       : "Nothing else can be set until a league is chosen."}
                 </div>
+                {league && divisionsInBuild.length > 0 && (
+                  <div className="card" style={{ marginTop: 10, padding: "10px 12px", background: "var(--bg)" }}>
+                    <div className="small" style={{ fontWeight: 700, marginBottom: 4 }}>One schedule per division</div>
+                    <div className="muted small" style={{ marginBottom: 6 }}>
+                      Teams only play teams in their own age bracket. Each of these gets its own round-robin,
+                      on the same day, starting at its own time.
+                    </div>
+                    <div className="btn-row" style={{ flexWrap: "wrap" }}>
+                      {divisionsInBuild.map((dv) => (
+                        <span key={dv} className="chip">{dv} · {(teamsByDivision.get(dv) || []).length} teams</span>
+                      ))}
+                      {noDivisionTeams.length > 0 && (
+                        <span className="chip" style={{ background: "rgba(220,150,30,.14)", color: "#a36800" }}>
+                          no bracket · {noDivisionTeams.length} teams
+                        </span>
+                      )}
+                    </div>
+                    {soloDivisions.length > 0 && (
+                      <div className="muted small" style={{ marginTop: 6, color: "var(--warn, #b40)" }}>
+                        {soloDivisions.join(", ")} {soloDivisions.length === 1 ? "has" : "have"} only one team, so
+                        nobody to play — no games will be made for {soloDivisions.length === 1 ? "it" : "them"}.
+                      </div>
+                    )}
+                    {noDivisionTeams.length > 0 && (
+                      <div className="muted small" style={{ marginTop: 6 }}>
+                        Teams with no bracket ({noDivisionTeams.slice(0, 4).join(", ")}{noDivisionTeams.length > 4 ? "…" : ""})
+                        play each other in one group. Build teams per division to split them properly.
+                      </div>
+                    )}
+                  </div>
+                )}
                 {league && (
                   <div className="muted small" style={{ marginTop: 6 }}>
                     Changing this later clears the fields and team choices below — they belong to the league.

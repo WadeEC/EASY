@@ -1,8 +1,7 @@
 import {
   movePlayer, bulkMovePlayers,
   getLeagueLocks, setLeagueLock, isLeagueLocked,
-  getFields, getRecords, getDivisions,
-} from "@/lib/tools.js";
+  getFields, getRecords, getDivisions, divisionOf,} from "@/lib/tools.js";
 import { bindRequest } from "@/lib/actor.js";
 import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 
@@ -41,7 +40,7 @@ export async function POST(req) {
         name: r.name || d.full_name || `#${r.id}`,
         league: d.league || "",
         second_league: d.second_league || "",
-        division: d.division || "",
+        division: divisionOf(d),
         season: d.season || "",
         age: d.age ?? "",
       };

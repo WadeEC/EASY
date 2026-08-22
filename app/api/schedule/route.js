@@ -1,10 +1,9 @@
 import {
-  scheduleTeams, getSchedule, saveSchedule, getFields, getRecords, updateRecord,
+  scheduleTeams, scheduleTeamsByDivision, teamDivisionMap, getSchedule, saveSchedule, getFields, getRecords, updateRecord,
   markGameWorked, unmarkGameWorked, logRefShift, payReport,
   setGameScore, clearGameScore, getStandings,
   listBlackouts, blackoutDateSet, addBlackout, removeBlackout, applyRainout, previewRainout,
-  rescheduleDate, pruneCrossDivisionGames,
-} from "@/lib/tools.js";
+  rescheduleDate, pruneCrossDivisionGames, divisionOf,} from "@/lib/tools.js";
 import { buildSchedule, weekDate, clockTime, placeOnFields } from "@/lib/schedule.js";
 import { seasonFromReq, leaguesForSeason } from "@/lib/seasons.js";
 import { bindRequest } from "@/lib/actor.js";
@@ -24,7 +23,7 @@ export async function POST(req) {
     if (snLeagues) leagues = leagues.filter((l) => snLeagues.includes(l));
     const players = getRecords("player").map((r) => {
       let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {}
-      return { team: d.team || "", league: d.league || "", second_league: d.second_league || "", division: d.division || "", season: d.season ? String(d.season) : "" };
+      return { team: d.team || "", league: d.league || "", second_league: d.second_league || "", division: divisionOf(d), season: d.season ? String(d.season) : "" };
     }).filter((p) => p.team && (!season || !p.season || p.season === season));
     function teamStats(league) {
       const stats = {};
@@ -42,6 +41,9 @@ export async function POST(req) {
       teamsByLeague: Object.fromEntries(leagues.map((l) => [l, scheduleTeams(l, season)])),
       teamStats: Object.fromEntries(leagues.map((l) => [l, teamStats(l)])),
       allTeamStats: teamStats(null),
+      // Teams grouped by the bracket they really play in — the build form shows
+      // this so you can see what each division's schedule will contain.
+      byDivision: Object.fromEntries(leagues.map((l) => [l, scheduleTeamsByDivision(l, season)])),
     });
   }
 
@@ -53,19 +55,33 @@ export async function POST(req) {
     const blackouts = blackoutDateSet(b.league || null);
     // Per-division start times — same league day, different times per division.
     const divisionStarts = b.division_start_times || {};
-    const divOfTeam = (n) => { const i = String(n || "").indexOf(" / "); return i > 0 ? String(n).slice(0, i) : ""; };
+    // A team's division comes from WHO IS ON IT (their ages), with the name
+    // prefix only as a fallback. Teams built before divisions existed are just
+    // "Team 7" — the old name-only rule put them all in one bracket-less pool,
+    // which is how a schedule ended up pairing eight-year-olds with fifteens.
+    const dvMap = teamDivisionMap(b.league || null, season);
     const teamsByDiv = new Map();
+    const mixedTeams = [];
     for (const t of teams) {
-      const dv = divOfTeam(t);
+      const info = dvMap.get(t);
+      if (info && info.mixed) { mixedTeams.push({ team: t, breakdown: info.breakdown }); continue; }
+      const dv = info ? (info.division || "") : (() => { const i = String(t || "").indexOf(" / "); return i > 0 ? String(t).slice(0, i) : ""; })();
       if (!teamsByDiv.has(dv)) teamsByDiv.set(dv, []);
       teamsByDiv.get(dv).push(t);
     }
+    if (mixedTeams.length) {
+      return Response.json({
+        error: `These teams have players from more than one age bracket, so there's no division to schedule them in: ${mixedTeams.map((m) => m.team).join(", ")}. Rebuild the teams per division, or move those players, then try again.`,
+        mixed_teams: mixedTeams,
+      });
+    }
     const realDivisions = [...teamsByDiv.keys()].filter((d) => !!d);
+    const soloDivisions = realDivisions.filter((d) => (teamsByDiv.get(d) || []).length < 2);
     // For each division (or the whole league if none), build its round-robin
     // independently so we can stagger start times without games stomping each
     // other on fields.
     const groupBuilds = realDivisions.length
-      ? realDivisions.map((dv) => ({ division: dv, teams: teamsByDiv.get(dv), start: divisionStarts[dv] || b.startTime || null,
+      ? realDivisions.filter((dv) => (teamsByDiv.get(dv) || []).length >= 2).map((dv) => ({ division: dv, teams: teamsByDiv.get(dv), start: divisionStarts[dv] || b.startTime || null,
           weeks: buildSchedule(teamsByDiv.get(dv), { startDate: b.startDate, weeks: b.weeks, gamesPerDay: b.gamesPerDay }) }))
       : [{ division: "", teams, start: b.startTime || null,
           weeks: buildSchedule(teams, { startDate: b.startDate, weeks: b.weeks, gamesPerDay: b.gamesPerDay }) }];
@@ -83,6 +99,13 @@ export async function POST(req) {
     return Response.json({
       teams, autoTeams, fields,
       divisions: realDivisions,
+      // What will actually be built, bracket by bracket. Teams never play
+      // outside their own.
+      per_division: realDivisions.map((dv) => ({
+        division: dv, teams: (teamsByDiv.get(dv) || []).length, start_time: divisionStarts[dv] || b.startTime || null,
+      })),
+      solo_divisions: soloDivisions.map((dv) => ({ division: dv, teams: (teamsByDiv.get(dv) || []).length })),
+      no_division_teams: teamsByDiv.get("") || [],
       division_start_times: divisionStarts,
       blackouts: listBlackouts(b.league || null),
       weeks,

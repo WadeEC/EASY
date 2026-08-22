@@ -1,4 +1,4 @@
-import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag, divisionOptions } from "@/lib/tools.js";
+import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag, divisionOptions, divisionOf,} from "@/lib/tools.js";
 import { bindRequest, getActor } from "@/lib/actor.js";
 import { seasonFromReq, inSeason } from "@/lib/seasons.js";
 
@@ -27,7 +27,7 @@ function scanDetail(p) {
     .map((g) => ({ week: g.week, date: g.date || "", time: g.time || "", location: g.location || "", vs: (g.home_team === team ? g.away_team : g.home_team) || "" }));
   const field = (games[0] && games[0].location) || p.league || "";
   return {
-    player: { id: p.id, name: p.name, age: p.age ?? "", division: p.division || "", league: p.league || "" },
+    player: { id: p.id, name: p.name, age: p.age ?? "", division: divisionOf(p), league: p.league || "" },
     team, coaches, field, games, notes: p.notes || "", flags: flagsForPlayer(p),
     jerseySize: p.jersey_size || "", jerseyIssued: p.jersey_issued === true,
     sizeConfirmedAt: p.size_confirmed_at || "", sizeConfirmedBy: p.size_confirmed_by || "",
@@ -47,7 +47,7 @@ export async function POST(req) {
     const players = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => {
       const d = parse(r.data);
       const issues = playerIssues({ id: r.id, ...d });
-      return { id: r.id, name: r.name || d.full_name || `#${r.id}`, team: d.team || "", league: d.league || "", division: d.division || "", present: checked.has(r.id), data: d, issues, status: issues.length ? "flag" : "clear" };
+      return { id: r.id, name: r.name || d.full_name || `#${r.id}`, team: d.team || "", league: d.league || "", division: divisionOf(d), present: checked.has(r.id), data: d, issues, status: issues.length ? "flag" : "clear" };
     });
     return Response.json({
       players, fields,
