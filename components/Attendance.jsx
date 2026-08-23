@@ -25,7 +25,9 @@ const STATUSES = [
 
 export default function Attendance({ go }) {
   const thisWeek = toISO(weekStart(new Date()));
-  const [tab, setTab] = useState("week");
+  // The grid is the view people live in — the whole season at a glance. "This
+  // week" is the thing you open deliberately on a Saturday.
+  const [tab, setTab] = useState("grid");
   const [week, setWeek] = useState(thisWeek);
   const [league, setLeague] = useState("");
   const [division, setDivision] = useState("");
@@ -318,15 +320,19 @@ export default function Attendance({ go }) {
             : !grid.weeks.length
               ? <div className="card"><p className="muted" style={{ margin: 0 }}>No weeks yet — set how many weeks this season runs above.</p></div>
               : (
-                <div className="card" style={{ padding: 0, overflow: "auto" }}>
+                <div className="card att-scroll" style={{ padding: 0 }}>
                   <table className="tbl att">
                     <thead>
                       <tr><th>Player</th>{grid.weeks.map((w, i) => {
                         const info = weekInfo(w);
                         return (
-                          <th key={w} className={info?.cancelled ? "muted" : undefined}>
+                          <th key={w} className={info?.cancelled || info?.beyond ? "muted" : undefined}>
                             {weekName(w, i)}
                             {info?.cancelled && <div className="att-wk-date">cancelled</div>}
+                            {/* A week with attendance on it that falls outside the
+                                season's week count. Kept so nothing is hidden, but
+                                labelled so it isn't a mystery column. */}
+                            {!info?.cancelled && info?.beyond && <div className="att-wk-date">extra — has check-ins</div>}
                           </th>
                         );
                       })}<th>Total</th></tr>
