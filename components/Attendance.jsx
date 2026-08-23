@@ -4,7 +4,6 @@ import { api, currentSeason } from "@/lib/api.js";
 
 const toISO = (d) => d.toISOString().slice(0, 10);
 function weekStart(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); return x; }
-const fmtWeek = (iso) => { const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString([], { month: "short", day: "numeric" }); };
 
 // Attendance, two ways.
 //
@@ -40,13 +39,18 @@ export default function Attendance({ go }) {
 
   const season = currentSeason();
   const seasonLabel = season === "*" ? "all seasons" : season;
+  // How many weeks this season runs. It's a decision, not something read off
+  // the schedule — a league takes attendance on weeks it never scheduled a
+  // game for, and the schedule builder's week count is a separate number.
+  const [weekCount, setWeekCount] = useState(10);
+  const [weekBusy, setWeekBusy] = useState(false);
 
   async function loadGrid() {
     const r = await api.attendanceReport({ week, league: league || null, division: division || null, team: team || null });
     const ok = r && Array.isArray(r.players);
     setGrid(ok
-      ? { leagues: r.leagues || [], divisions: r.divisions || [], teams: r.teams || [], players: r.players || [], weeks: r.weeks || [], totalWeeks: r.totalWeeks || 0, error: null }
-      : { leagues: [], divisions: [], teams: [], players: [], weeks: [], totalWeeks: 0, error: (r && r.error) || "Could not load attendance." });
+      ? { leagues: r.leagues || [], divisions: r.divisions || [], teams: r.teams || [], players: r.players || [], weeks: r.weeks || [], weekList: r.weekList || [], totalWeeks: r.totalWeeks || 0, error: null }
+      : { leagues: [], divisions: [], teams: [], players: [], weeks: [], weekList: [], totalWeeks: 0, error: (r && r.error) || "Could not load attendance." });
   }
 
   async function loadSheet() {
@@ -55,6 +59,20 @@ export default function Attendance({ go }) {
     setDraft({});
   }
 
+  async function loadWeekCount() {
+    try { const s2 = await api.activeWeekGet(); if (s2 && s2.count) setWeekCount(s2.count); } catch {}
+  }
+  async function changeWeekCount(n) {
+    const v = Math.max(1, Math.min(40, Math.floor(Number(n) || 0)));
+    setWeekCount(v);
+    setWeekBusy(true);
+    const res = await api.weekCountSet(v);
+    setWeekBusy(false);
+    if (res && res.error) { setFlash({ bad: true, text: res.error }); return; }
+    await loadGrid();
+    if (tab === "week") await loadSheet();
+  }
+  useEffect(() => { loadWeekCount(); /* eslint-disable-next-line */ }, []);
   useEffect(() => { loadGrid(); /* eslint-disable-next-line */ }, [league, division, team]);
   useEffect(() => { if (tab === "week") loadSheet(); /* eslint-disable-next-line */ }, [tab, week, league, division, team]);
 
@@ -109,7 +127,7 @@ export default function Attendance({ go }) {
     if (res.error) { setFlash({ bad: true, text: res.error }); return; }
     setFlash({
       bad: res.blocked > 0,
-      text: `Saved ${res.saved} for ${fmtWeek(week)}` +
+      text: `Saved ${res.saved} for ${weekName(week, weeks.indexOf(week))}` +
         (res.blocked ? ` · ${res.blocked} refused: ${res.blocked_details?.[0]?.reason || ""}` : "") +
         ` — ${res.totals.present} present, ${res.totals.absent} absent, ${res.totals.excused} excused.`,
     });
@@ -119,6 +137,14 @@ export default function Attendance({ go }) {
 
   const weeks = sheet?.weeks?.length ? sheet.weeks : grid.weeks;
   const weekIdx = weeks.indexOf(week);
+  // Week 1, Week 2, Week 3. Nobody checking a kid in thinks "Sunday the 16th".
+  const wl = (grid.weekList && grid.weekList.length ? grid.weekList : (sheet?.weekList || []));
+  const weekInfo = (w) => wl.find((x) => x.week === w) || null;
+  const weekName = (w, i) => {
+    const info = weekInfo(w);
+    if (info) return info.label;
+    return `Week ${i + 1}`;
+  };
   const dl = (format) => api.exportUrl({ week, league: league || null, format, scope: "attendance" });
   const dlAll = (format) => api.exportUrl({ league: league || null, format, scope: "attendance" });
 
@@ -172,12 +198,24 @@ export default function Attendance({ go }) {
               {grid.teams.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
+          <div>
+            <label className="fld">Weeks in season</label>
+            <input type="number" min={1} max={40} value={weekCount} style={{ width: 88 }} disabled={weekBusy}
+              onChange={(e) => setWeekCount(e.target.value)}
+              onBlur={(e) => changeWeekCount(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") changeWeekCount(e.target.value); }}
+              title="How many weeks this season runs. Nothing to do with the schedule builder." />
+          </div>
           {tab === "week" && (
             <div>
               <label className="fld">Week</label>
-              <select value={week} onChange={(e) => setWeek(e.target.value)}>
-                {!weeks.includes(week) && <option value={week}>{fmtWeek(week)} (this week)</option>}
-                {weeks.map((w, i) => <option key={w} value={w}>Wk {i + 1} · {fmtWeek(w)}</option>)}
+              <select value={week} onChange={(e) => setWeek(e.target.value)} style={{ minWidth: 150 }}>
+                {!weeks.includes(week) && <option value={week}>This week</option>}
+                {weeks.map((w, i) => (
+                  <option key={w} value={w}>
+                    {weekName(w, i)}{weekInfo(w)?.cancelled ? " (cancelled)" : ""}{weekInfo(w)?.recorded ? " ✓" : ""}
+                  </option>
+                ))}
               </select>
             </div>
           )}
@@ -192,9 +230,7 @@ export default function Attendance({ go }) {
           <div className="card">
             <div className="between" style={{ flexWrap: "wrap", gap: 10 }}>
               <div>
-                <strong>
-                  {weekIdx >= 0 ? `Week ${weekIdx + 1} · ` : ""}{fmtWeek(week)}
-                </strong>
+                <strong>{weekName(week, weekIdx)}{weekInfo(week)?.cancelled ? " · cancelled" : ""}</strong>
                 <div className="muted small">
                   {liveTotals.present} present · {liveTotals.absent} absent · {liveTotals.excused} excused ·{" "}
                   {liveTotals.not_taken} not taken · {rows.length} on the roster
@@ -280,12 +316,20 @@ export default function Attendance({ go }) {
           {!grid.players.length
             ? <div className="card"><p className="muted" style={{ margin: 0 }}>No players match this filter.</p></div>
             : !grid.weeks.length
-              ? <div className="card"><p className="muted" style={{ margin: 0 }}>No weeks to show yet. Build a <a onClick={() => go({ page: "schedule" })}>schedule</a> to lay out the season&rsquo;s weeks, then check players off here.</p></div>
+              ? <div className="card"><p className="muted" style={{ margin: 0 }}>No weeks yet — set how many weeks this season runs above.</p></div>
               : (
                 <div className="card" style={{ padding: 0, overflow: "auto" }}>
                   <table className="tbl att">
                     <thead>
-                      <tr><th>Player</th>{grid.weeks.map((w, i) => <th key={w} title={w}>Wk {i + 1}<div className="att-wk-date">{fmtWeek(w)}</div></th>)}<th>Total</th></tr>
+                      <tr><th>Player</th>{grid.weeks.map((w, i) => {
+                        const info = weekInfo(w);
+                        return (
+                          <th key={w} className={info?.cancelled ? "muted" : undefined}>
+                            {weekName(w, i)}
+                            {info?.cancelled && <div className="att-wk-date">cancelled</div>}
+                          </th>
+                        );
+                      })}<th>Total</th></tr>
                     </thead>
                     <tbody>
                       {grid.players.map((p) => (

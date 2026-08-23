@@ -7,8 +7,9 @@ import { bindRequest } from "@/lib/actor.js";
 //   POST { week }                        → set the active week (blank clears)
 //   POST { action:"label", week, label } → rename a week ("" restores Week N)
 //   POST { action:"cancel", week, cancelled } → cancel/uncancel; numbering shifts
+//   POST { action:"count", count }       → how many weeks the season runs
 import { getSetting, setSetting } from "@/lib/memory.js";
-import { seasonWeekList, setWeekLabel, setWeekCancelled } from "@/lib/tools.js";
+import { seasonWeekList, setWeekLabel, setWeekCancelled, getSeasonWeekCount, setSeasonWeekCount } from "@/lib/tools.js";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,7 @@ export async function GET(req) {
   return Response.json({
     week,
     weekList,
+    count: getSeasonWeekCount(),          // how many weeks this season runs
     weeks: weekList.map((w) => w.week),   // back-compat: plain ISO list
     current: currentWeekISO(),
   });
@@ -36,6 +38,9 @@ export async function POST(req) {
 
   if (b.action === "label") return Response.json(setWeekLabel(b.week, b.label));
   if (b.action === "cancel") return Response.json(setWeekCancelled(b.week, b.cancelled !== false));
+  // How many weeks the season runs. Attendance only — the schedule builder's
+  // week count is a different thing and stays a different thing.
+  if (b.action === "count") return Response.json(setSeasonWeekCount(b.count));
 
   const w = (b.week || "").trim();
   if (w && !/^\d{4}-\d{2}-\d{2}$/.test(w)) return Response.json({ error: "week must be YYYY-MM-DD" });

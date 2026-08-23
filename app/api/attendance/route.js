@@ -1,6 +1,6 @@
 import {
   getRecords, getFields, seedAttendance, getCheckins, setCheckin, updateRecord,
-  attendanceWeek, saveAttendanceWeek, attendanceWeeks, ATTENDANCE_STATUSES, divisionOptions, rosterOrder, divisionOf, leagueOptions,} from "@/lib/tools.js";
+  attendanceWeek, saveAttendanceWeek, attendanceWeeks, ATTENDANCE_STATUSES, divisionOptions, rosterOrder, divisionOf, leagueOptions, seasonWeekList,} from "@/lib/tools.js";
 import { getRow, now, logAudit } from "@/lib/db.js";
 import { getActor, bindRequest } from "@/lib/actor.js";
 import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
@@ -51,7 +51,8 @@ export async function POST(req) {
   if (b.action === "week_sheet") {
     return Response.json({
       ...attendanceWeek({ week: b.week, league: b.league || null, division: b.division || null, team: b.team || null }),
-      weeks: attendanceWeeks(b.league || null),
+      weeks: seasonWeekList().map((w) => w.week),
+      weekList: seasonWeekList(),
       statuses: ATTENDANCE_STATUSES,
     });
   }
@@ -71,7 +72,8 @@ export async function POST(req) {
   }
 
   if (b.action === "weeks") {
-    return Response.json({ weeks: attendanceWeeks(b.league || null) });
+    const weekList = seasonWeekList();
+    return Response.json({ weeks: weekList.map((w) => w.week), weekList });
   }
 
   if (b.action === "toggle") {
@@ -115,15 +117,13 @@ export async function POST(req) {
   if (b.action === "report") {
     seedAttendance();
     const recs = getRecords("attendance").map((r) => parse(r.data));
-    // Season weeks come from the SCHEDULE (each game's week), so every week of the season shows
-    // as a column even before anyone is checked in. Also include any weeks already marked.
-    const games = getRecords("game").map((r) => parse(r.data));
-    const scopedGames = b.league ? games.filter((g) => String(g.league || "") === b.league) : games;
-    const weeksSet = new Set();
-    for (const g of scopedGames) { const w = weekStartISO(g.date); if (w) weeksSet.add(w); }
-    for (const r of recs) if (r.week) weeksSet.add(String(r.week));
-    if (b.week) weeksSet.add(String(b.week)); // always include the current week
-    const weeks = [...weeksSet].sort().slice(0, 30); // chronological (Week 1 → last)
+    // The season's weeks are ITS OWN SETTING — how many weeks this season runs,
+    // set on this page or the board. They used to be read off the schedule,
+    // which meant building fixtures silently changed the attendance grid and a
+    // league that never scheduled a game had no weeks at all. The schedule
+    // builder's week count is a different number for a different job.
+    const weekList = seasonWeekList();
+    const weeks = weekList.map((w) => w.week);
     const byPlayer = {};
     for (const r of recs) { const id = Number(r.player_id); (byPlayer[id] = byPlayer[id] || new Set()).add(String(r.week)); }
     const all = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => { const d = parse(r.data); return { id: r.id, name: r.name || d.full_name || `#${r.id}`, league: d.league || "", division: divisionOf(d), team: d.team || "" }; });
@@ -134,7 +134,7 @@ export async function POST(req) {
     players = players.slice().sort(rosterOrder());
     const out = players.map((p) => { const set = byPlayer[p.id] || new Set(); return { ...p, present: weeks.map((w) => set.has(w)), count: set.size }; });
     return Response.json({
-      weeks, players: out, totalWeeks: weeksSet.size,
+      weeks, weekList, players: out, totalWeeks: weekList.length,
       leagues: leagueOptions(all.map((p) => p.league), leaguesForSeason(season)),
       divisions: divisionOptions(all.map((p) => p.division)),
       teams: [...new Set(all.map((p) => p.team).filter(Boolean))],

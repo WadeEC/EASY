@@ -18,7 +18,8 @@ export default function Board({ go }) {
   // The season's weeks, named and numbered by the server: numbering counts the
   // weeks that actually HAPPEN, so a cancelled Saturday gives up its number and
   // everything after it moves up. Any name can be overridden.
-  const [weekList, setWeekList] = useState([{ week: defaultWeek, date: defaultWeek, label: "Week 1", index: 1, current: true, planned: true }]);
+  const [weekList, setWeekList] = useState([{ week: defaultWeek, label: "Week 1", index: 1, current: true }]);
+  const [weekCount, setWeekCount] = useState(10);   // how many weeks this season runs
   const [renaming, setRenaming] = useState(null);   // { week, label }
   const [league, setLeague] = useState("");
   const [division, setDivision] = useState("");
@@ -74,6 +75,7 @@ export default function Board({ go }) {
         const s = await api.activeWeekGet();
         if (s && s.week) setWeek(s.week);
         if (s && Array.isArray(s.weekList) && s.weekList.length) setWeekList(s.weekList);
+        if (s && s.count) setWeekCount(s.count);
       } catch {}
     })();
     scanRef.current?.focus();
@@ -109,6 +111,13 @@ export default function Board({ go }) {
     if (res && Array.isArray(res.weeks) && res.weeks.length && typeof res.weeks[0] === "object") setWeekList(res.weeks);
     else { try { const s = await api.activeWeekGet(); if (s?.weekList?.length) setWeekList(s.weekList); } catch {} }
   }
+  async function changeWeekCount(n) {
+    const v = Math.max(1, Math.min(40, Math.floor(Number(n) || 0)));
+    setWeekCount(v);
+    const res = await api.weekCountSet(v);
+    if (res && res.error) return setFlash({ ok: false, text: res.error });
+    await refreshWeeks(res);
+  }
   async function saveWeekName() {
     if (!renaming) return;
     const res = await api.weekRename(renaming.week, renaming.label);
@@ -124,8 +133,8 @@ export default function Board({ go }) {
     setFlash({
       ok: true,
       text: info?.cancelled
-        ? `${fmtDate(info.date)} is back on — the weeks after it move down one.`
-        : `${fmtDate(info?.date || w)} cancelled — it gives up its number and the weeks after it move up one.`,
+        ? `${info.label} is back on — the weeks after it move down one.`
+        : `${info?.label || "That week"} cancelled — it gives up its number and the weeks after it move up one.`,
     });
   }
 
@@ -282,7 +291,7 @@ export default function Board({ go }) {
                   title="Active check-in week — the kiosk uses this too">
                   {weekList.map((w) => (
                     <option key={w.week} value={w.week}>
-                      {w.label} · {fmtDate(w.date)}{w.current ? " (this week)" : ""}{w.cancelled ? " — cancelled" : ""}
+                      {w.label}{w.cancelled ? " (cancelled)" : ""}{w.recorded ? " ✓" : ""}
                     </option>
                   ))}
                 </select>
@@ -298,10 +307,20 @@ export default function Board({ go }) {
                   </button>
                 </div>
               </div>
+              <div>
+                {/* How long the season runs. Attendance only — the schedule
+                    builder's week count is a separate number for a separate job. */}
+                <label className="fld">Weeks in season</label>
+                <input type="number" min={1} max={40} value={weekCount} style={{ width: 84 }}
+                  onChange={(e) => setWeekCount(e.target.value)}
+                  onBlur={(e) => changeWeekCount(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") changeWeekCount(e.target.value); }}
+                  title="How many weeks this season runs. Doesn't touch the schedule." />
+              </div>
             </div>
             {renaming && (
               <div className="card" style={{ marginTop: 10, padding: "10px 12px" }}>
-                <label className="fld">Name for {fmtDate(weekList.find((x) => x.week === renaming.week)?.date || renaming.week)}</label>
+                <label className="fld">Name for {weekList.find((x) => x.week === renaming.week)?.label || "this week"}</label>
                 <div className="addbar">
                   <input autoFocus value={renaming.label} placeholder="e.g. Jamboree, Picture Day — blank restores Week N"
                     onChange={(e) => setRenaming({ ...renaming, label: e.target.value })}
@@ -318,8 +337,8 @@ export default function Board({ go }) {
             <div className="muted small" style={{ marginTop: 8 }}>
               {(() => {
                 const w = weekList.find((x) => x.week === week);
-                if (!w) return `Week of ${fmtDate(week)}`;
-                return `${w.label} · ${fmtDate(w.date)}${w.cancelled ? " · cancelled" : ""}${w.planned ? " · no games scheduled yet" : ""}`;
+                if (!w) return "This week";
+                return `${w.label} of ${weekCount}${w.cancelled ? " · cancelled" : ""}${w.recorded ? "" : " · nobody checked in yet"}`;
               })()} · {(() => {
                 const t = filtered.filter((u) => !u.noTeam).length;
                 const n = filtered.filter((u) => u.noTeam).reduce((a, u) => a + u.players.length, 0);
