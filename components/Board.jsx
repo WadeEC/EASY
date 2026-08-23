@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, currentSeason } from "@/lib/api.js";
+import { weekCountSummary } from "@/lib/ui.js";
 import FieldInput from "./FieldInput.jsx";
 
 const toISO = (d) => d.toISOString().slice(0, 10);
@@ -19,7 +20,9 @@ export default function Board({ go }) {
   // weeks that actually HAPPEN, so a cancelled Saturday gives up its number and
   // everything after it moves up. Any name can be overridden.
   const [weekList, setWeekList] = useState([{ week: defaultWeek, label: "Week 1", index: 1, current: true }]);
-  const [weekCount, setWeekCount] = useState(10);   // how many weeks this season runs
+  const [weekCount, setWeekCount] = useState(10);   // what's showing in the box
+  const [weekSaved, setWeekSaved] = useState(10);   // what's actually set
+  const [weekConfirm, setWeekConfirm] = useState(null);   // the preview, awaiting a yes
   const [renaming, setRenaming] = useState(null);   // { week, label }
   const [league, setLeague] = useState("");
   const [division, setDivision] = useState("");
@@ -75,7 +78,7 @@ export default function Board({ go }) {
         const s = await api.activeWeekGet();
         if (s && s.week) setWeek(s.week);
         if (s && Array.isArray(s.weekList) && s.weekList.length) setWeekList(s.weekList);
-        if (s && s.count) setWeekCount(s.count);
+        if (s && s.count) { setWeekCount(s.count); setWeekSaved(s.count); }
       } catch {}
     })();
     scanRef.current?.focus();
@@ -111,11 +114,22 @@ export default function Board({ go }) {
     if (res && Array.isArray(res.weeks) && res.weeks.length && typeof res.weeks[0] === "object") setWeekList(res.weeks);
     else { try { const s = await api.activeWeekGet(); if (s?.weekList?.length) setWeekList(s.weekList); } catch {} }
   }
-  async function changeWeekCount(n) {
+  // Ask first — shortening a season takes weeks off the grid.
+  async function askWeekCount(n) {
     const v = Math.max(1, Math.min(40, Math.floor(Number(n) || 0)));
-    setWeekCount(v);
+    if (v === weekSaved) { setWeekCount(weekSaved); setWeekConfirm(null); return; }
+    const pv = await api.weekCountPreview(v);
+    if (pv && pv.error) { setFlash({ ok: false, text: pv.error }); setWeekCount(weekSaved); return; }
+    setWeekConfirm(pv);
+  }
+  function cancelWeekCount() { setWeekConfirm(null); setWeekCount(weekSaved); }
+  async function applyWeekCount() {
+    const v = weekConfirm?.to;
     const res = await api.weekCountSet(v);
-    if (res && res.error) return setFlash({ ok: false, text: res.error });
+    setWeekConfirm(null);
+    if (res && res.error) { setFlash({ ok: false, text: res.error }); setWeekCount(weekSaved); return; }
+    setWeekSaved(v); setWeekCount(v);
+    setFlash({ ok: true, text: `Season is now ${v} week${v === 1 ? "" : "s"}.` });
     await refreshWeeks(res);
   }
   async function saveWeekName() {
@@ -313,11 +327,28 @@ export default function Board({ go }) {
                 <label className="fld">Weeks in season</label>
                 <input type="number" min={1} max={40} value={weekCount} style={{ width: 84 }}
                   onChange={(e) => setWeekCount(e.target.value)}
-                  onBlur={(e) => changeWeekCount(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") changeWeekCount(e.target.value); }}
+                  onBlur={(e) => askWeekCount(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") askWeekCount(e.target.value); if (e.key === "Escape") cancelWeekCount(); }}
                   title="How many weeks this season runs. Doesn't touch the schedule." />
               </div>
             </div>
+            {weekConfirm && (() => {
+              const { title, lines } = weekCountSummary(weekConfirm);
+              return (
+                <div className="card" style={{ marginTop: 10, padding: "10px 12px", borderLeft: "3px solid var(--brand)" }}>
+                  <div className="between" style={{ alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <b>{title}</b>
+                      {lines.map((l, i) => <div key={i} className="muted small">{l}</div>)}
+                    </div>
+                    <div className="btn-row">
+                      <button className="btn ghost sm" onClick={cancelWeekCount}>Cancel</button>
+                      <button className="btn primary sm" onClick={applyWeekCount}>Yes, {weekConfirm.to} weeks</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             {renaming && (
               <div className="card" style={{ marginTop: 10, padding: "10px 12px" }}>
                 <label className="fld">Name for {weekList.find((x) => x.week === renaming.week)?.label || "this week"}</label>

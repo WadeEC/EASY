@@ -9,7 +9,7 @@ import { bindRequest } from "@/lib/actor.js";
 //   POST { action:"cancel", week, cancelled } → cancel/uncancel; numbering shifts
 //   POST { action:"count", count }       → how many weeks the season runs
 import { getSetting, setSetting } from "@/lib/memory.js";
-import { seasonWeekList, setWeekLabel, setWeekCancelled, getSeasonWeekCount, setSeasonWeekCount } from "@/lib/tools.js";
+import { seasonWeekList, setWeekLabel, setWeekCancelled, getSeasonWeekCount, setSeasonWeekCount, previewSeasonWeekCount } from "@/lib/tools.js";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +40,12 @@ export async function POST(req) {
   if (b.action === "cancel") return Response.json(setWeekCancelled(b.week, b.cancelled !== false));
   // How many weeks the season runs. Attendance only — the schedule builder's
   // week count is a different thing and stays a different thing.
-  if (b.action === "count") return Response.json(setSeasonWeekCount(b.count));
+  if (b.action === "count") {
+    // dry_run answers "what would this do" so the UI can confirm before it
+    // shortens somebody's season out from under them.
+    if (b.dry_run) return Response.json(previewSeasonWeekCount(b.count));
+    return Response.json(setSeasonWeekCount(b.count));
+  }
 
   const w = (b.week || "").trim();
   if (w && !/^\d{4}-\d{2}-\d{2}$/.test(w)) return Response.json({ error: "week must be YYYY-MM-DD" });

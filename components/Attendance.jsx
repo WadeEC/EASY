@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { api, currentSeason } from "@/lib/api.js";
+import { weekCountSummary } from "@/lib/ui.js";
 
 const toISO = (d) => d.toISOString().slice(0, 10);
 function weekStart(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); return x; }
@@ -44,8 +45,10 @@ export default function Attendance({ go }) {
   // How many weeks this season runs. It's a decision, not something read off
   // the schedule — a league takes attendance on weeks it never scheduled a
   // game for, and the schedule builder's week count is a separate number.
-  const [weekCount, setWeekCount] = useState(10);
+  const [weekCount, setWeekCount] = useState(10);   // what's showing in the box
+  const [weekSaved, setWeekSaved] = useState(10);   // what's actually set
   const [weekBusy, setWeekBusy] = useState(false);
+  const [weekConfirm, setWeekConfirm] = useState(null);   // the preview, awaiting a yes
 
   async function loadGrid() {
     const r = await api.attendanceReport({ week, league: league || null, division: division || null, team: team || null });
@@ -62,15 +65,28 @@ export default function Attendance({ go }) {
   }
 
   async function loadWeekCount() {
-    try { const s2 = await api.activeWeekGet(); if (s2 && s2.count) setWeekCount(s2.count); } catch {}
+    try { const s2 = await api.activeWeekGet(); if (s2 && s2.count) { setWeekCount(s2.count); setWeekSaved(s2.count); } } catch {}
   }
-  async function changeWeekCount(n) {
+  // Ask before changing it. Shortening a season takes columns off the grid,
+  // and you should see which ones — and be told that a week with check-ins in
+  // it is kept, not deleted — before it happens.
+  async function askWeekCount(n) {
     const v = Math.max(1, Math.min(40, Math.floor(Number(n) || 0)));
-    setWeekCount(v);
+    if (v === weekSaved) { setWeekCount(weekSaved); setWeekConfirm(null); return; }
+    const pv = await api.weekCountPreview(v);
+    if (pv && pv.error) { setFlash({ bad: true, text: pv.error }); setWeekCount(weekSaved); return; }
+    setWeekConfirm(pv);
+  }
+  function cancelWeekCount() { setWeekConfirm(null); setWeekCount(weekSaved); }
+  async function applyWeekCount() {
+    const v = weekConfirm?.to;
     setWeekBusy(true);
     const res = await api.weekCountSet(v);
     setWeekBusy(false);
-    if (res && res.error) { setFlash({ bad: true, text: res.error }); return; }
+    setWeekConfirm(null);
+    if (res && res.error) { setFlash({ bad: true, text: res.error }); setWeekCount(weekSaved); return; }
+    setWeekSaved(v); setWeekCount(v);
+    setFlash({ text: `Season is now ${v} week${v === 1 ? "" : "s"}.` });
     await loadGrid();
     if (tab === "week") await loadSheet();
   }
@@ -204,8 +220,8 @@ export default function Attendance({ go }) {
             <label className="fld">Weeks in season</label>
             <input type="number" min={1} max={40} value={weekCount} style={{ width: 88 }} disabled={weekBusy}
               onChange={(e) => setWeekCount(e.target.value)}
-              onBlur={(e) => changeWeekCount(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") changeWeekCount(e.target.value); }}
+              onBlur={(e) => askWeekCount(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") askWeekCount(e.target.value); if (e.key === "Escape") cancelWeekCount(); }}
               title="How many weeks this season runs. Nothing to do with the schedule builder." />
           </div>
           {tab === "week" && (
@@ -223,6 +239,26 @@ export default function Attendance({ go }) {
           )}
         </div>
       </div>
+
+      {weekConfirm && (() => {
+        const { title, lines } = weekCountSummary(weekConfirm);
+        return (
+          <div className="card" style={{ borderLeft: "3px solid var(--brand)", marginBottom: 14 }}>
+            <div className="between" style={{ alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ margin: "0 0 4px" }}>{title}</h3>
+                {lines.map((l, i) => <div key={i} className="muted small">{l}</div>)}
+              </div>
+              <div className="btn-row">
+                <button className="btn ghost sm" onClick={cancelWeekCount}>Cancel</button>
+                <button className="btn primary sm" disabled={weekBusy} onClick={applyWeekCount}>
+                  {weekBusy ? "Saving…" : `Yes, ${weekConfirm.to} weeks`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ------------------------------------------------------------ one week */}
       {tab === "week" && (sheet === undefined ? <div className="muted">Loading…</div> : sheet.error ? (
