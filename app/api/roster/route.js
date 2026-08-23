@@ -41,6 +41,7 @@ export async function POST(req) {
         league: d.league || "",
         second_league: d.second_league || "",
         division: divisionOf(d),
+        division_override: d.division_override === true,
         season: d.season || "",
         age: d.age ?? "",
       };

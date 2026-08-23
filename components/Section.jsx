@@ -160,7 +160,7 @@ const DEFAULT_HIDDEN_BY_TYPE = {
   player: new Set([
     "second_league",
     "link_group", "link_reason",
-    "size_confirmed_at", "size_confirmed_by",
+    "size_confirmed_at", "size_confirmed_by", "division_override", "division_source",
   ]),
 };
 

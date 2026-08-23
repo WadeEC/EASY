@@ -15,7 +15,7 @@ const hasVal = (v) => v != null && String(v).trim() !== "";
 // over, or what a staff member wrote in the notes. A re-upload must never
 // reach into these — that's how a re-import quietly undoes a Saturday's work.
 const APP_OWNED = new Set([
-  "team", "division", "division_source", "season",
+  "team", "division", "division_source", "division_override", "season",
   "jersey_issued", "size_confirmed_at", "size_confirmed_by",
   "press_override", "press_override_reason", "press_override_by", "press_override_at",
   "key_tag", "notes", "link_group", "link_reason",
