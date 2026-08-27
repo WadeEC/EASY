@@ -3,7 +3,7 @@ import {
   markGameWorked, unmarkGameWorked, logRefShift, payReport,
   setGameScore, clearGameScore, getStandings,
   listBlackouts, blackoutDateSet, addBlackout, removeBlackout, applyRainout, previewRainout,
-  rescheduleDate, pruneCrossDivisionGames, divisionOf,} from "@/lib/tools.js";
+  rescheduleDate, pruneCrossDivisionGames, addGame, divisionOf,} from "@/lib/tools.js";
 import { buildSchedule, weekDate, clockTime, placeOnFields } from "@/lib/schedule.js";
 import { seasonFromReq, leaguesForSeason } from "@/lib/seasons.js";
 import { bindRequest } from "@/lib/actor.js";
@@ -115,6 +115,13 @@ export async function POST(req) {
   if (b.action === "save") return Response.json(saveSchedule(b.league || null, b.games || [], season));
   if (b.action === "clear") return Response.json({ ...saveSchedule(b.league || null, [], season), cleared: true });
   if (b.action === "list") return Response.json({ games: getSchedule(b.league || null, season) });
+  // One game at a time — a make-up, a tournament fixture, anything the round-robin
+  // build didn't produce. Unlike "save", this never touches the existing schedule.
+  // The same tools function S-Dot's add_game calls, so both routes behave identically.
+  if (b.action === "add_game") return Response.json(addGame({
+    league: b.league || null, date: b.date, time: b.time,
+    home_team: b.home, away_team: b.away, field: b.location, referee: b.referee, week: b.week,
+  }));
   if (b.action === "assign_ref") {
     const res = updateRecord(Number(b.game_id), { referee: b.referee || "" });
     return Response.json(res.error ? { error: res.error } : { status: "ok" });

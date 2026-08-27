@@ -14,10 +14,12 @@ export default function Advanced({ refresh }) {
         <button className={"tab" + (tab === "schema" ? " active" : "")} onClick={() => setTab("schema")}>Schema</button>
         <button className={"tab" + (tab === "rules" ? " active" : "")} onClick={() => setTab("rules")}>Rules</button>
         <button className={"tab" + (tab === "history" ? " active" : "")} onClick={() => setTab("history")}>History</button>
+        <button className={"tab" + (tab === "cleanup" ? " active" : "")} onClick={() => setTab("cleanup")}>Cleanup</button>
       </div>
       {tab === "schema" && <SchemaTab refresh={refresh} />}
       {tab === "rules" && <RulesTab />}
       {tab === "history" && <HistoryTab />}
+      {tab === "cleanup" && <CleanupTab />}
     </div>
   );
 }
@@ -126,6 +128,91 @@ function HistoryTab() {
         ))}
         {!entries.length && <div className="muted small">No changes yet.</div>}
       </div>
+    </div>
+  );
+}
+
+// Repairs for data written before the app normalized it on the way in. Both preview
+// first, both write through the audited path, and both leave locked seasons alone.
+function CleanupTab() {
+  return (
+    <>
+      <RepairCard
+        title="Extra spaces in imported data"
+        blurb={<>Spreadsheets often carry stray spacing — a double space in a name, a trailing space
+          after a division. Check-in shows those players because it lists everyone, but the Team
+          Editor filters by exact league and division, so they disappear from the board. This trims
+          both ends of every text value and collapses double spaces. Notes keep their wording, and
+          anything stored as JSON is left untouched.</>}
+        preview={() => api.tidyPreview()}
+        apply={() => api.tidyApply()}
+        verb="Tidied"
+        clean="Nothing to clean up — every value is already tidy."
+      />
+      <RepairCard
+        title="Old names left behind after a rename"
+        blurb={<>Renaming someone used to update their details but not the display name every screen
+          reads first — so the old name kept showing on coach pills, check-in and the coach-to-player
+          links. New renames stay in step on their own; this fixes people renamed before that.</>}
+        preview={() => api.resyncNamesPreview()}
+        apply={() => api.resyncNames()}
+        verb="Updated"
+        clean="Every record already shows its current name."
+      />
+    </>
+  );
+}
+
+// Shared shell for the repair tools: preview first, then apply. Every write goes
+// through the audited path, so History can undo them one by one and Time Machine
+// can rewind the whole batch in one action.
+function RepairCard({ title, blurb, preview, apply, verb, clean }) {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState(null);
+
+  async function run(doApply) {
+    setBusy(true); setFlash(null);
+    const r = doApply ? await apply() : await preview();
+    setBusy(false);
+    if (r && r.error) { setFlash({ ok: false, text: r.error }); return; }
+    setRes(r);
+    if (doApply) setFlash({ ok: true, text: `${verb} ${r.changed} record${r.changed === 1 ? "" : "s"}. Undo any of them from History, or rewind the lot in Time Machine.` });
+  }
+
+  return (
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>{title}</h3>
+      <p className="muted">{blurb}</p>
+      {flash && <div className={"note " + (flash.ok ? "good" : "warn")}>{flash.text}</div>}
+      <div className="btn-row">
+        <button className="btn" disabled={busy} onClick={() => run(false)}>{busy ? "Scanning…" : "Preview changes"}</button>
+        <button className="btn primary" disabled={busy || !res || !res.changed} onClick={() => run(true)}>Apply</button>
+      </div>
+      {res && (
+        <div style={{ marginTop: 12 }}>
+          <div className="muted small">
+            Scanned {res.scanned} records · {res.changed} to fix
+            {res.skippedLocked ? ` · ${res.skippedLocked} skipped in locked seasons` : ""}.
+          </div>
+          {!res.changed && <p className="muted" style={{ marginTop: 8 }}>{clean}</p>}
+          {res.changed > 0 && (
+            <table className="tbl" style={{ marginTop: 8 }}>
+              <thead><tr><th>Record</th><th>Before</th><th>After</th></tr></thead>
+              <tbody>
+                {res.changes.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.name} <span className="muted small">#{c.id} · {c.type}</span></td>
+                    <td className="muted small">{c.before}</td>
+                    <td className="small">{c.after}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {res.truncated && <div className="muted small" style={{ marginTop: 6 }}>Showing the first 300 — Apply fixes all of them.</div>}
+        </div>
+      )}
     </div>
   );
 }

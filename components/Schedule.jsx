@@ -386,6 +386,20 @@ export default function Schedule({ go, onAsk, startRef }) {
     if (!wk) { wk = { week: g.week, date: g.date, games: [] }; savedWeeks.push(wk); }
     wk.games.push(g);
   }
+  // Team list for adding a single game: this league's rostered teams, plus anyone
+  // already on the schedule (guest / tournament teams the roster doesn't know about).
+  const addGameTeams = [...new Set([
+    ...((league && cfg && cfg.teamsByLeague && cfg.teamsByLeague[league]) || (cfg && cfg.allTeams) || []),
+    ...saved.flatMap((g) => [g.home, g.away]),
+  ].filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  // Default the date to the next game day that hasn't happened yet — most one-off
+  // games get added to an upcoming weekend.
+  const nextGameDate = (() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const dates = [...new Set(saved.map((g) => g.date).filter(Boolean))].sort();
+    return dates.find((d) => d >= today) || dates[dates.length - 1] || "";
+  })();
+
   const savedConflicts = findConflicts(filteredSaved);
   const savedConflictCount = savedConflicts.referee.length + savedConflicts.field.length + savedConflicts.team.length;
   function LeaguePicker({ onChange }) {
@@ -942,6 +956,16 @@ export default function Schedule({ go, onAsk, startRef }) {
             )}
           </div>
 
+          <AddGameCard
+            league={league}
+            teams={addGameTeams}
+            fieldChoices={fieldChoices}
+            referees={referees}
+            defaultDate={nextGameDate}
+            onAdded={() => loadSaved(league)}
+            setFlash={setFlash}
+          />
+
           {/* Calendar + Reschedule at the top — most common day-of-game admin
               actions, and they used to live at the bottom of the page. */}
           {saved.length > 0 && (
@@ -1030,7 +1054,7 @@ export default function Schedule({ go, onAsk, startRef }) {
               modal handle viewing/editing. Empty state still surfaces here so the
               user can find the Build link. */}
           {!savedWeeks.length && (
-            <div className="card"><p className="muted" style={{ margin: 0 }}>No saved schedule for this league yet. Build one on the <a onClick={() => setTab("build")}>Build schedule</a> tab.</p></div>
+            <div className="card"><p className="muted" style={{ margin: 0 }}>No saved schedule for this league yet. Build a full season on the <a onClick={() => setTab("build")}>Build schedule</a> tab, or add games one at a time with <b>Add a game</b> above.</p></div>
           )}
           {/* The rainout/rescheduler now sits up top — see RescheduleCard. This bottom card is gone. */}
 
@@ -2160,5 +2184,108 @@ function RainoutButton({ date, league, onApplied }) {
         </div>
       )}
     </>
+  );
+}
+
+// Add ONE game — a make-up, a tournament fixture, a matchup the round-robin never
+// made. The Build tab rewrites a league's whole schedule, so it's the wrong tool for
+// this. Posts to the same tools function S-Dot's add_game uses, so both agree on the
+// rules: no self-play, no cross-bracket matchup, no blacked-out date, and a warning
+// (not a block) when the slot is already busy.
+function AddGameCard({ league, teams, fieldChoices, referees, defaultDate, onAdded, setFlash }) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [home, setHome] = useState("");
+  const [away, setAway] = useState("");
+  const [location, setLocation] = useState("");
+  const [referee, setReferee] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Prefill the date the first time the form opens; don't fight the user after that.
+  useEffect(() => { if (open && !date && defaultDate) setDate(defaultDate); }, [open, defaultDate]); // eslint-disable-line
+
+  const bracketOf = (n) => { const i = String(n || "").indexOf(" / "); return i > 0 ? String(n).slice(0, i) : ""; };
+  // Teams only play inside their own bracket, so once a home team is picked the away
+  // list narrows to match. Guest teams with no bracket in their name always show.
+  const homeBracket = bracketOf(home);
+  const awayChoices = teams.filter((t) => t !== home && (!homeBracket || !bracketOf(t) || bracketOf(t) === homeBracket));
+
+  function reset() { setTime(""); setHome(""); setAway(""); setLocation(""); setReferee(""); setErr(""); }
+
+  async function submit(e) {
+    e && e.preventDefault();
+    setErr(""); setBusy(true);
+    const r = await api.gameAdd({ league: league || null, date, time, home, away, location, referee });
+    setBusy(false);
+    if (!r || r.error) { setErr((r && r.error) || "Could not add the game."); return; }
+    const warn = (r.warnings || []).join(" ");
+    setFlash && setFlash({
+      ok: !warn,
+      text: `Added ${r.home} vs ${r.away} on ${fmtDate(r.date)} (week ${r.week}).${warn ? " " + warn : ""}`,
+    });
+    reset();
+    onAdded && onAdded();
+  }
+
+  if (!open) {
+    return (
+      <div className="card">
+        <div className="between" style={{ flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <h3 style={{ margin: "0 0 2px" }}>Add a game</h3>
+            <div className="muted small">One at a time — a make-up game, a tournament fixture, or anything the season build missed. Nothing already on the schedule is touched.</div>
+          </div>
+          <button className="btn primary" onClick={() => setOpen(true)}>Add a game</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="between" style={{ marginBottom: 8 }}>
+        <h3 style={{ margin: 0 }}>Add a game{league ? <span className="muted small"> · {league}</span> : null}</h3>
+        <button className="btn ghost sm" onClick={() => { setOpen(false); reset(); }}>Cancel</button>
+      </div>
+      {err && <div className="note warn">{err}</div>}
+      <form onSubmit={submit}>
+        <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <label className="fld">Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          </div>
+          <div>
+            <label className="fld">Time</label>
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          </div>
+          <div style={{ flex: "1 1 180px" }}>
+            <label className="fld">Home team</label>
+            <input list="addgame-teams" value={home} onChange={(e) => setHome(e.target.value)} placeholder="Pick or type a team" required />
+          </div>
+          <div style={{ flex: "1 1 180px" }}>
+            <label className="fld">Away team</label>
+            <input list="addgame-away" value={away} onChange={(e) => setAway(e.target.value)} placeholder="Pick or type a team" required />
+          </div>
+          <div style={{ flex: "1 1 140px" }}>
+            <label className="fld">Field</label>
+            <input list="addgame-fields" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Field 1" />
+          </div>
+          <div style={{ flex: "1 1 140px" }}>
+            <label className="fld">Referee</label>
+            <input list="addgame-refs" value={referee} onChange={(e) => setReferee(e.target.value)} placeholder="optional" />
+          </div>
+        </div>
+        <datalist id="addgame-teams">{teams.map((t) => <option key={t} value={t} />)}</datalist>
+        <datalist id="addgame-away">{awayChoices.map((t) => <option key={t} value={t} />)}</datalist>
+        <datalist id="addgame-fields">{(fieldChoices || []).map((f) => <option key={f} value={f} />)}</datalist>
+        <datalist id="addgame-refs">{(referees || []).map((r) => <option key={r} value={r} />)}</datalist>
+        <div className="btn-row" style={{ marginTop: 12 }}>
+          <button className="btn primary" type="submit" disabled={busy || !date || !home || !away}>{busy ? "Adding…" : "Add game"}</button>
+          <span className="muted small">Files under the week already used for that date — or the next week if the date is new. Goes into the season you're viewing.</span>
+        </div>
+      </form>
+    </div>
   );
 }
