@@ -213,6 +213,12 @@ pre.diff .add{color:#9be58b}.pre .del{color:#ff9a9a}
    border so it reads as a holding pen rather than a real team. */
 .team-col.no-team{border-top-color:var(--line)}
 .team-col>.between h3{font-size:1.16rem;letter-spacing:-.01em}
+/* Team names are editable in place: double-click the heading. The dotted underline
+   on hover is the only hint the affordance needs — it stays out of the way until
+   the pointer is on the name. */
+.team-col>.between h3.renamable{cursor:text;border-bottom:1px dashed transparent;align-self:flex-start}
+.team-col>.between h3.renamable:hover{border-bottom-color:var(--line)}
+.team-rename{font-size:1.16rem;font-weight:800;letter-spacing:-.01em;color:var(--navy);flex:1 1 auto;min-width:0;margin-right:8px;padding:2px 6px;border:1px solid var(--brand);border-radius:7px;background:#fff;font-family:inherit}
 .team-col .stack{counter-reset:pl;gap:7px;margin-top:10px}
 .drag-item{cursor:grab;display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:13.5px;transition:border-color .12s,box-shadow .12s,background .12s}
 .drag-item>span:first-child{flex:1;min-width:0}

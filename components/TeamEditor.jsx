@@ -21,6 +21,8 @@ export default function TeamEditor({ go, onAsk }) {
   const [vals, setVals] = useState({});
   const [aiText, setAiText] = useState("");
   const [over, setOver] = useState(null);
+  const [renaming, setRenaming] = useState(null);   // { team, draft } while a heading is being edited
+  const [renameBusy, setRenameBusy] = useState(false);
   const [divisions, setDivisions] = useState([]);   // the defined age brackets
   const dragId = useRef(null);
 
@@ -96,6 +98,30 @@ export default function TeamEditor({ go, onAsk }) {
     if (res && res.error) return setFlash({ ok: false, text: res.error });
     setEdit(null); setFlash({ ok: true, text: "Player updated." }); await load();
   }
+
+  // Renaming a team is a cascade, not a text edit: the name is copied onto every
+  // player, coach, game and bracket. The server does all of that in one audited
+  // batch (api.renameTeam) — the UI just collects the new name and reports back.
+  async function commitRename() {
+    if (!renaming || renameBusy) return;
+    const from = renaming.team;
+    const to = renaming.draft.trim();
+    if (!to || to === from) { setRenaming(null); return; }
+    setRenameBusy(true);
+    const res = await api.renameTeam(from, to, league || null);
+    setRenameBusy(false);
+    if (res && res.error) { setFlash({ ok: false, text: res.error }); return; }   // keep the box open so the name can be fixed
+    setRenaming(null);
+    const bits = [
+      `${res.players} player${res.players === 1 ? "" : "s"}`,
+      res.coaches ? `${res.coaches} coach${res.coaches === 1 ? "" : "es"}` : null,
+      res.games ? `${res.games} game${res.games === 1 ? "" : "s"}` : null,
+      res.brackets ? `${res.brackets} bracket${res.brackets === 1 ? "" : "s"}` : null,
+    ].filter(Boolean);
+    setFlash({ ok: true, text: `Renamed "${from}" to "${to}" — updated ${bits.join(", ")}.` });
+    await load();
+  }
+
   function submitAi() { const t = aiText.trim(); if (!t) return; if (onAsk) onAsk(`For team editing: ${t}`); setAiText(""); }
 
   const teamCard = (name, list) => {
@@ -106,7 +132,28 @@ export default function TeamEditor({ go, onAsk }) {
         onDragLeave={() => setOver((o) => (o === (name || "__none") ? null : o))}
         onDrop={() => moveTo(name)}>
         <div className="between">
-          <h3 style={{ margin: 0 }}>{name || "No team"}</h3>
+          {renaming && renaming.team === name ? (
+            <input
+              className="team-rename"
+              autoFocus
+              disabled={renameBusy}
+              value={renaming.draft}
+              onChange={(e) => setRenaming((r) => (r ? { ...r, draft: e.target.value } : r))}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); commitRename(); }
+                if (e.key === "Escape") { e.preventDefault(); setRenaming(null); }
+              }}
+            />
+          ) : (
+            <h3
+              style={{ margin: 0 }}
+              className={name ? "renamable" : undefined}
+              title={name ? "Double-click to rename this team" : undefined}
+              onDoubleClick={name ? () => setRenaming({ team: name, draft: name }) : undefined}>
+              {name || "No team"}
+            </h3>
+          )}
           <div className="btn-row" style={{ gap: 6 }}>
             {list.some((p) => lowSet.has(p.id)) && <span className="chip" title="low-attendance players">{list.filter((p) => lowSet.has(p.id)).length} low</span>}
             <span className="chip">{list.length}{list.length ? ` · avg ${avg(list.map((p) => Number(p.data.age) || 0))}` : ""}</span>

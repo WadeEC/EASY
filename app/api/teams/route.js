@@ -2,7 +2,7 @@ import {
   getRecords, getFields, getRecordTypes, addField, updateRecord,
   createTeamRule, getTeamRules, deleteRule, setRuleActive,
   seedCoaches, setAllStarCap, lowAvailabilitySet,
-  linkData, listLinks, getDivisions, divisionOf,
+  linkData, listLinks, getDivisions, divisionOf, renameTeam,
   coachesForDivision, divisionTeamSlots,} from "@/lib/tools.js";
 import { buildTeams, teamCount } from "@/lib/teams.js";
 import { bindRequest } from "@/lib/actor.js";
@@ -221,6 +221,12 @@ export async function POST(req) {
         coaches: (t.coaches || []).map((c) => ({ id: c.id, name: c.name, role: c.role })),
       })),
     });
+  }
+
+  // Renaming a team rewrites every place the name was copied to — players,
+  // coaches, both sides of each game, tournament brackets. One audited batch.
+  if (b.action === "rename") {
+    return Response.json(renameTeam(b.from, b.to, { league: b.league || null }));
   }
 
   if (b.action === "save") {
