@@ -1,9 +1,10 @@
 import {
   getRecords, getFields, getRecordTypes, addField, updateRecord,
   createTeamRule, getTeamRules, deleteRule, setRuleActive,
-  seedCoaches, getCoaches, setAllStarCap, lowAvailabilitySet,
-  linkData, listLinks, getDivisions, divisionOf,} from "@/lib/tools.js";
-import { buildTeams } from "@/lib/teams.js";
+  seedCoaches, setAllStarCap, lowAvailabilitySet,
+  linkData, listLinks, getDivisions, divisionOf,
+  coachesForDivision, divisionTeamSlots,} from "@/lib/tools.js";
+import { buildTeams, teamCount } from "@/lib/teams.js";
 import { bindRequest } from "@/lib/actor.js";
 import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 
@@ -96,7 +97,6 @@ export async function POST(req) {
     const coachChild = ccRule ? !!ccRule.active : true;
     const capRule = allRules.find((r) => r.type === "cap" && r.active) || null;
     const capField = capRule ? capRule.field : null;
-    const coaches = getCoaches(b.league || null);
     const links = linkData();
 
     // A division with no league set applies to every league.
@@ -107,19 +107,35 @@ export async function POST(req) {
     if (noDiv.length) slices.push({ name: "", players: noDiv, unsorted: true });
 
     const outTeams = [], report = [], conflicts = [];
+    // Each bracket gets only its own coaches. A spare volunteer (no team, no child) is offered
+    // to whichever bracket needs one first and then taken off the table, so one person can't
+    // come out of a single build assigned to three different teams.
+    const spent = new Set();
+    let anyCoach = false;
     for (const sl of slices) {
       if (!sl.players.length) { report.push({ division: sl.name || "(no division)", players: 0, teams: 0 }); continue; }
+      const count = teamCount(sl.players.length, { numTeams: null, targetSize: b.targetSize ? Number(b.targetSize) : null });
+      const slots = sl.name ? divisionTeamSlots(b.league || null, sl.name, count, season) : null;
+      const coaches = coachesForDivision(b.league || null, sl.name || null, { season }).filter((c) => !spent.has(c.id));
+      if (coaches.length) anyCoach = true;
       const r = buildTeams(sl.players, {
         numTeams: null,                                    // per-bracket sizing, never one league-wide count
         targetSize: b.targetSize ? Number(b.targetSize) : null,
+        teamNames: slots ? slots.names : null,             // reuse the bracket's existing teams
+        coachTeam: slots ? slots.coachTeam : null,         // and leave their staff where it is
         rules, coaches, coachChild, links,
       });
       const prefix = sl.name ? `${sl.name} / ` : "No division / ";
       for (const t of (r.teams || [])) {
-        outTeams.push({ ...t, name: prefix + t.name, division: sl.name || "" });
+        for (const c of (t.coaches || [])) spent.add(c.id);
+        outTeams.push({ ...t, name: slots && slots.names.length ? t.name : prefix + t.name, division: sl.name || "" });
       }
       conflicts.push(...(r.conflicts || []));
-      report.push({ division: sl.name || "(no division)", players: sl.players.length, teams: (r.teams || []).length, unsorted: !!sl.unsorted });
+      report.push({
+        division: sl.name || "(no division)", players: sl.players.length, teams: (r.teams || []).length,
+        unsorted: !!sl.unsorted,
+        kept: slots ? slots.kept.length : 0, added: slots ? slots.added : [], dropped: slots ? slots.dropped : [],
+      });
     }
 
     const linkKindsByPlayer = new Map();
@@ -135,7 +151,7 @@ export async function POST(req) {
       per_division: true,
       slices: report,
       balanceField: (outTeams[0] && outTeams[0].balanceField) || "age",
-      hasCoaches: coaches.length > 0,
+      hasCoaches: anyCoach,
       cap: capRule ? { field: capField, max: Number(capRule.max) || null } : null,
       linkConflicts: conflicts,
       teams: outTeams.map((t) => ({
@@ -162,11 +178,20 @@ export async function POST(req) {
     const coachChild = ccRule ? !!ccRule.active : true; // default on if no rule yet
     const capRule = allRules.find((r) => r.type === "cap" && r.active) || null;
     const capField = capRule ? capRule.field : null;
-    const coaches = getCoaches(b.league || null);
+    // Only this bracket's coaches, and the spares who belong nowhere yet. Handing a
+    // one-division build every coach in the league is what used to strip 9-10 and 11-12
+    // coaches off their teams the moment the 13-14 build was saved.
+    const coaches = coachesForDivision(b.league || null, b.division || null, { season });
     const links = linkData();
+    // Reuse the teams the bracket already has and add only the shortfall, so going from four
+    // teams to six keeps Groups 9-12 and their staff exactly as they are.
+    const count = teamCount(players.length, { numTeams: b.numTeams, targetSize: b.targetSize });
+    const slots = b.division ? divisionTeamSlots(b.league || null, b.division, count, season) : null;
     const result = buildTeams(players, {
       numTeams: b.numTeams ? Number(b.numTeams) : null,
       targetSize: b.targetSize ? Number(b.targetSize) : null,
+      teamNames: slots ? slots.names : null,
+      coachTeam: slots ? slots.coachTeam : null,
       rules,
       coaches,
       coachChild,
@@ -185,6 +210,7 @@ export async function POST(req) {
     }
     return Response.json({
       total: players.length,
+      teamPlan: slots ? { kept: slots.kept, added: slots.added, dropped: slots.dropped } : null,
       balanceField: (teams[0] && teams[0].balanceField) || "age",
       hasCoaches: coaches.length > 0,
       cap: capRule ? { field: capField, max: Number(capRule.max) || null } : null,

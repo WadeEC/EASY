@@ -36,12 +36,15 @@ export default function TeamBuilder({ go, onAsk }) {
   const [editTeams, setEditTeams] = useState(null); // editable preview
   const [linkConflicts, setLinkConflicts] = useState([]); // unresolved do-not-link pairs from the last preview
   const [slices, setSlices] = useState([]);         // per-division build report from the last preview
+  const [teamPlan, setTeamPlan] = useState(null);   // which existing teams are kept / added / dropped
   const [cap, setCap] = useState(null);             // all-star cap { field, max }
   const [over, setOver] = useState(-1);
   const [pending, setPending] = useState(null); // proposed move awaiting confirmation
   const [advanced, setAdvanced] = useState(false);   // show manual size controls
   const [saved, setSaved] = useState(false);          // were the current teams just saved?
   const [confirmSave, setConfirmSave] = useState(false);
+  const [renaming, setRenaming] = useState(null);     // { idx, draft } while a preview heading is being edited
+  const [renameBusy, setRenameBusy] = useState(false);
   const [aiText, setAiText] = useState("");
   const dragId = useRef(null);
 
@@ -101,21 +104,58 @@ export default function TeamBuilder({ go, onAsk }) {
     const res = await api.teamsPreview(opts);
     setBusy(false);
     if (res.error) return setFlash({ ok: false, text: res.error });
-    if (!res.total) { setEditTeams(null); setLinkConflicts([]); return setFlash({ ok: false, text: "No players in that league yet." }); }
+    if (!res.total) { setEditTeams(null); setLinkConflicts([]); setTeamPlan(null); return setFlash({ ok: false, text: "No players in that league yet." }); }
     setCap(res.cap || null);
     const teams = res.teams || [];
     if (!teams.length) {
-      setEditTeams(null); setLinkConflicts([]); setSlices([]);
+      setEditTeams(null); setLinkConflicts([]); setSlices([]); setTeamPlan(null);
       return setFlash({ ok: false, text: each
         ? "Nobody is sorted into a division yet, so there's nothing to build per bracket. Set up divisions under Season → Divisions, or re-sort players into their age bracket from the Players page."
         : "No players in that division." });
     }
     setSlices(res.slices || []);
+    // What the build does to the teams that already exist. Per bracket the report carries it
+    // slice by slice; for a single division the server sends one plan.
+    setTeamPlan(each
+      ? (res.slices || []).reduce((acc, sl) => {
+          const added = sl.added || [], dropped = sl.dropped || [];
+          if (!sl.kept && !added.length && !dropped.length) return acc;
+          return { kept: (acc?.kept || 0) + (sl.kept || 0), added: [...(acc?.added || []), ...added], dropped: [...(acc?.dropped || []), ...dropped] };
+        }, null)
+      : (res.teamPlan && (res.teamPlan.kept.length || res.teamPlan.added.length || res.teamPlan.dropped.length)
+          ? { kept: res.teamPlan.kept.length, added: res.teamPlan.added, dropped: res.teamPlan.dropped }
+          : null));
     setEditTeams(teams.map((t) => ({ name: t.name, division: t.division || "", players: t.players, coaches: t.coaches || [] })));
     setLinkConflicts(res.linkConflicts || []);
     setSaved(false);
   }
   function doSave() { if (editTeams && editTeams.length) setConfirmSave(true); }
+
+  // Double-click a preview heading to rename the team. Before these teams are
+  // saved the name exists only here, so the rename is local state. Once they've
+  // been saved, the name has been copied onto players, coaches, games and
+  // brackets — so it goes through the same cascading rename the Team Editor uses,
+  // otherwise "Save again" would leave the old name behind on the schedule.
+  async function commitRename() {
+    if (!renaming || renameBusy || !editTeams) return;
+    const { idx } = renaming;
+    const from = editTeams[idx] ? editTeams[idx].name : "";
+    const to = renaming.draft.trim();
+    if (!to || to === from) { setRenaming(null); return; }
+    if (editTeams.some((t, i) => i !== idx && t.name === to)) {
+      setFlash({ ok: false, text: `Another team here is already called "${to}".` });
+      return;
+    }
+    if (saved) {
+      setRenameBusy(true);
+      const res = await api.renameTeam(from, to, league || null);
+      setRenameBusy(false);
+      if (res && res.error) { setFlash({ ok: false, text: res.error }); return; }
+      setFlash({ ok: true, text: `Renamed "${from}" to "${to}" everywhere it was used.` });
+    }
+    setEditTeams((ts) => ts.map((t, i) => (i === idx ? { ...t, name: to } : t)));
+    setRenaming(null);
+  }
   async function commitSave() {
     const teams = editTeams.map((t) => ({ name: t.name, ids: t.players.map((p) => p.id), coachIds: (t.coaches || []).map((c) => c.id) }));
     const res = await api.teamsSave(teams);
@@ -242,6 +282,14 @@ export default function TeamBuilder({ go, onAsk }) {
   const starsOverride = (editTeams && cap)
     ? editTeams.filter((t) => t.players.filter((p) => p.star).length > cap.max && starOverride(t).length > 0)
     : [];
+  const planText = (() => {
+    if (!teamPlan) return "";
+    const bits = [];
+    if (teamPlan.kept) bits.push(`keeping ${teamPlan.kept} existing team${teamPlan.kept !== 1 ? "s" : ""} and the coaches already on them`);
+    if (teamPlan.added.length) bits.push(`adding ${teamPlan.added.length} new team${teamPlan.added.length !== 1 ? "s" : ""} (${teamPlan.added.join(", ")})`);
+    if (teamPlan.dropped.length) bits.push(`retiring ${teamPlan.dropped.join(", ")} and folding those players and coaches back in`);
+    return bits.join(", ");
+  })();
   const lowByTeam = editTeams ? editTeams.map((t) => t.players.filter((p) => p.low).length) : [];
   const anyLow = lowByTeam.some((n) => n > 0);
   const lowOff = anyLow && (Math.max(...lowByTeam) - Math.min(...lowByTeam) > 1);
@@ -428,6 +476,11 @@ export default function TeamBuilder({ go, onAsk }) {
               Low-attendance players are spread unevenly (per team: {lowByTeam.join(", ")}). Rebuild to even them out so no team is short on reliable bodies.
             </div>
           )}
+          {planText && (
+            <div className="note info" style={{ marginTop: 12 }}>
+              Teams in this bracket: {planText}. Coaches in other divisions are untouched.
+            </div>
+          )}
           {linkConflicts.length > 0 && (
             <div className="note warn" style={{ marginTop: 12, borderColor: "#dc2626" }}>
               {linkConflicts.length} do-not-link conflict{linkConflicts.length !== 1 ? "s" : ""}: players who should NOT share a team are currently together. Drag one to a different team to resolve.
@@ -452,7 +505,28 @@ export default function TeamBuilder({ go, onAsk }) {
                 onDragLeave={() => setOver((o) => (o === idx ? -1 : o))}
                 onDrop={() => onDrop(idx)}>
                 <div className="between">
-                  <h3 style={{ margin: 0 }}>{t.name}</h3>
+                  {renaming && renaming.idx === idx ? (
+                    <input
+                      className="team-rename"
+                      autoFocus
+                      disabled={renameBusy}
+                      value={renaming.draft}
+                      onChange={(e) => setRenaming((r) => (r ? { ...r, draft: e.target.value } : r))}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); commitRename(); }
+                        if (e.key === "Escape") { e.preventDefault(); setRenaming(null); }
+                      }}
+                    />
+                  ) : (
+                    <h3
+                      style={{ margin: 0 }}
+                      className="renamable"
+                      title="Double-click to rename this team"
+                      onDoubleClick={() => setRenaming({ idx, draft: t.name })}>
+                      {t.name}
+                    </h3>
+                  )}
                   <div className="btn-row" style={{ gap: 6 }}>
                     {cap && t.players.some((p) => p.star) && (() => { const s = t.players.filter((p) => p.star).length; return <span className={"chip" + (s > cap.max ? " brand" : "")}>{s} all-star{s !== 1 ? "s" : ""}</span>; })()}
                     {cap && (() => {
@@ -546,7 +620,8 @@ export default function TeamBuilder({ go, onAsk }) {
             <div className="overlay" onClick={() => setConfirmSave(false)}>
               <div className="modal" onClick={(e) => e.stopPropagation()}>
                 <h2 style={{ marginBottom: 4 }}>Save these teams?</h2>
-                <div className="muted small">This assigns {totalPlayers} players across {editTeams.length} teams{coachCount ? ` and ${coachCount} coaches` : ""}{league ? ` in ${league}` : ""}, replacing any earlier team assignments for them. You can rebuild or drag players to adjust anytime.</div>
+                <div className="muted small">This assigns {totalPlayers} players across {editTeams.length} teams{coachCount ? ` and ${coachCount} coaches` : ""}{league ? ` in ${league}` : ""}, replacing any earlier team assignments for them. Only the {perDivision ? "brackets" : "bracket"} shown below change — teams and coaches in other divisions are left alone. You can rebuild or drag players to adjust anytime.</div>
+                {planText && <div className="muted small" style={{ marginTop: 6 }}>This build is {planText}.</div>}
                 <div className="stack" style={{ gap: 4, marginTop: 10, maxHeight: 220, overflow: "auto" }}>
                   {editTeams.map((t) => (
                     <div key={t.name} className="small">{t.name}: <b>{t.players.length}</b> player{t.players.length !== 1 ? "s" : ""}{t.coaches && t.coaches.length ? ` · ${t.coaches.length} coach${t.coaches.length > 1 ? "es" : ""}` : ""}</div>
