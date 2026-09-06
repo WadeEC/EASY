@@ -159,14 +159,57 @@ function CleanupTab() {
         verb="Updated"
         clean="Every record already shows its current name."
       />
+      <FieldClashCard />
     </>
+  );
+}
+
+// Two divisions on one field at one time — the schedule builder used to place each
+// bracket on its own, always starting at Field 1. New builds share the day's fields;
+// this moves the games already saved.
+function FieldClashCard() {
+  const [leagues, setLeagues] = useState([]);
+  const [league, setLeague] = useState("");
+  const [count, setCount] = useState("");
+  useEffect(() => { api.scheduleConfig().then((r) => setLeagues(r.leagues || [])).catch(() => {}); }, []);
+  return (
+    <RepairCard
+      title="Two divisions on the same field"
+      unit="game"
+      verb="Moved"
+      blurb={<>Schedules built before the divisions shared a field list have Ages 7-8 and Ages 9-10
+        both starting at Field 1 in the same hour. This moves the later division up to the next free
+        field — 3, 4, 5 — and changes nothing else: the day, the time, the matchup, the referee and
+        any score all stay put. The division that starts earliest keeps the fields it has. Fields to
+        move onto are the ones that league's schedule already uses; raise the count below if you have
+        more fields than the schedule ever used.</>}
+      controls={
+        <div className="btn-row" style={{ marginBottom: 10 }}>
+          <div>
+            <label className="fld">League</label>
+            <select value={league} onChange={(e) => setLeague(e.target.value)}>
+              <option value="">All leagues</option>
+              {leagues.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="fld">Fields available</label>
+            <input type="number" min="1" max="20" style={{ width: 110 }} value={count}
+              onChange={(e) => setCount(e.target.value)} placeholder="as scheduled" />
+          </div>
+        </div>
+      }
+      preview={() => api.fieldClashPreview(league, Number(count) || null)}
+      apply={() => api.fieldClashFix(league, Number(count) || null)}
+      clean="No two games share a field at the same time."
+    />
   );
 }
 
 // Shared shell for the repair tools: preview first, then apply. Every write goes
 // through the audited path, so History can undo them one by one and Time Machine
 // can rewind the whole batch in one action.
-function RepairCard({ title, blurb, preview, apply, verb, clean }) {
+function RepairCard({ title, blurb, preview, apply, verb, clean, controls = null, unit = "record" }) {
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState(null);
@@ -177,13 +220,14 @@ function RepairCard({ title, blurb, preview, apply, verb, clean }) {
     setBusy(false);
     if (r && r.error) { setFlash({ ok: false, text: r.error }); return; }
     setRes(r);
-    if (doApply) setFlash({ ok: true, text: `${verb} ${r.changed} record${r.changed === 1 ? "" : "s"}. Undo any of them from History, or rewind the lot in Time Machine.` });
+    if (doApply) setFlash({ ok: true, text: `${verb} ${r.changed} ${unit}${r.changed === 1 ? "" : "s"}. Undo any of them from History, or rewind the lot in Time Machine.` });
   }
 
   return (
     <div className="card">
       <h3 style={{ marginTop: 0 }}>{title}</h3>
       <p className="muted">{blurb}</p>
+      {controls}
       {flash && <div className={"note " + (flash.ok ? "good" : "warn")}>{flash.text}</div>}
       <div className="btn-row">
         <button className="btn" disabled={busy} onClick={() => run(false)}>{busy ? "Scanning…" : "Preview changes"}</button>
@@ -192,7 +236,7 @@ function RepairCard({ title, blurb, preview, apply, verb, clean }) {
       {res && (
         <div style={{ marginTop: 12 }}>
           <div className="muted small">
-            Scanned {res.scanned} records · {res.changed} to fix
+            Scanned {res.scanned} {unit}s · {res.changed} to fix
             {res.skippedLocked ? ` · ${res.skippedLocked} skipped in locked seasons` : ""}.
           </div>
           {!res.changed && <p className="muted" style={{ marginTop: 8 }}>{clean}</p>}
@@ -211,6 +255,13 @@ function RepairCard({ title, blurb, preview, apply, verb, clean }) {
             </table>
           )}
           {res.truncated && <div className="muted small" style={{ marginTop: 6 }}>Showing the first 300 — Apply fixes all of them.</div>}
+          {res.short_of_fields && res.short_of_fields.length > 0 && (
+            <div className="note warn" style={{ marginTop: 10 }}>
+              Not enough fields to separate everything. {res.short_of_fields.map((f) => (
+                `${f.date} at ${f.time}${f.league ? ` (${f.league})` : ""} needs ${f.needed} fields, ${f.available} available`
+              )).join("; ")}. Raise "Fields available" if you have more, or move those games to another time.
+            </div>
+          )}
         </div>
       )}
     </div>

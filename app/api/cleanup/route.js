@@ -1,4 +1,4 @@
-import { tidyWhitespace, resyncDisplayNames } from "@/lib/tools.js";
+import { tidyWhitespace, resyncDisplayNames, fixFieldClashes } from "@/lib/tools.js";
 import { bindRequest, getActor } from "@/lib/actor.js";
 import { setScope, ALL_SEASONS } from "@/lib/season-scope.js";
 
@@ -30,6 +30,12 @@ export async function POST(req) {
 
   if (b.action === "resync_preview") return Response.json(resyncDisplayNames({ dryRun: true, type: b.type || null }));
   if (b.action === "resync") return Response.json(resyncDisplayNames({ dryRun: false, type: b.type || null, actor: `${getActor()} (cleanup)` }));
+
+  // "fields" re-lays the field each saved game sits on so two divisions stop
+  // sharing one field at one time — times, matchups, refs and scores untouched.
+  // fields_count raises the pool beyond what the schedule already uses.
+  if (b.action === "fields_preview") return Response.json(fixFieldClashes({ dryRun: true, league: b.league || null, fieldsCount: b.fields_count || null }));
+  if (b.action === "fields") return Response.json(fixFieldClashes({ dryRun: false, league: b.league || null, fieldsCount: b.fields_count || null, actor: `${getActor()} (cleanup)` }));
 
   return Response.json({ error: "unknown action" });
 }
