@@ -4,7 +4,7 @@ import {
   setGameScore, clearGameScore, getStandings,
   listBlackouts, blackoutDateSet, addBlackout, removeBlackout, applyRainout, previewRainout,
   rescheduleDate, pruneCrossDivisionGames, addGame, divisionOf,} from "@/lib/tools.js";
-import { buildSchedule, weekDate, clockTime, placeOnFields } from "@/lib/schedule.js";
+import { buildSchedule, weekDate, clockTime, placeOnFields, minutesOf } from "@/lib/schedule.js";
 import { seasonFromReq, leaguesForSeason } from "@/lib/seasons.js";
 import { bindRequest } from "@/lib/actor.js";
 
@@ -86,12 +86,22 @@ export async function POST(req) {
       : [{ division: "", teams, start: b.startTime || null,
           weeks: buildSchedule(teams, { startDate: b.startDate, weeks: b.weeks, gamesPerDay: b.gamesPerDay }) }];
     const totalWeeks = Math.max(...groupBuilds.map((g) => g.weeks.length), 0);
+    // One field ledger per game day, shared by every division: whoever plays an
+    // hour first fills the low-numbered fields and the next division picks up
+    // where they stopped (Ages 7-8 on Fields 1-2 at 1:00, Ages 9-10 on 3-5),
+    // instead of each bracket restarting at Field 1 and colliding. Earliest
+    // start time places first.
+    const placeOrder = groupBuilds
+      .map((g, i) => ({ g, i, m: minutesOf(g.start) }))
+      .sort((a, b) => (a.m == null ? 1e9 : a.m) - (b.m == null ? 1e9 : b.m) || a.i - b.i)
+      .map((x) => x.g);
     const weeks = Array.from({ length: totalWeeks }, (_, i) => {
       const date = weekDate(b.startDate, i, blackouts);
       const games = [];
-      for (const g of groupBuilds) {
+      const dayFields = new Map(); // field -> booked minute ranges for this date
+      for (const g of placeOrder) {
         const wkGames = g.weeks[i] || [];
-        const placed = placeOnFields(wkGames, fields, g.start, gap);
+        const placed = placeOnFields(wkGames, fields, g.start, gap, dayFields);
         for (const p of placed) games.push(p);
       }
       return { week: i + 1, date, games };
