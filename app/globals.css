@@ -391,6 +391,23 @@ pre.diff .add{color:#9be58b}.pre .del{color:#ff9a9a}
 .scan-bar{display:flex;gap:10px}
 .scan-bar input{flex:1;font-size:22px;padding:18px 20px;border-radius:12px}
 .scan-bar .btn{font-size:17px;padding:0 26px;border-radius:12px;flex:0 0 auto}
+/* Kiosk lockdown (ScanIn.jsx adds .kiosk-locked to <body>): hide the mouse
+   pointer on the kiosk screen, no text selection, no long-press callouts,
+   no pinch-zoom. The search box still takes typing and key-tag scans. */
+body.kiosk-locked,body.kiosk-locked *{cursor:none !important;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+body.kiosk-locked{touch-action:pan-y;overscroll-behavior:none}
+body.kiosk-locked input,body.kiosk-locked select,body.kiosk-locked textarea{-webkit-user-select:text;user-select:text}
+/* Kiosk pop-up touch keyboard (TouchPad in ScanIn.jsx) */
+.tpad{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--bg);user-select:none;-webkit-user-select:none;touch-action:manipulation}
+.tpad-names{display:flex;flex-wrap:wrap;gap:8px;min-height:48px;align-items:center;margin-bottom:10px}
+.tpad-name{font-size:17px;font-weight:700;padding:10px 16px;border-radius:999px;border:2px solid var(--brand);background:#fff;color:var(--ink);cursor:pointer}
+.tpad-name:active{background:var(--brand-soft)}
+.tpad-row{display:flex;justify-content:center;gap:6px;margin-top:6px}
+.tpad-key{flex:1 1 0;max-width:58px;height:52px;font-size:20px;font-weight:700;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);cursor:pointer}
+.tpad-key:active{background:var(--brand-soft);border-color:var(--brand)}
+.tpad-key.wide{max-width:100px;font-size:16px}
+.tpad-key.space{max-width:260px;flex-grow:4;font-size:16px}
+.tpad-key.go{background:var(--brand);border-color:var(--brand);color:#fff}
 .scan-log{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-radius:8px;background:var(--bg)}
 .scan-log.good{background:var(--good-soft)}
 .scan-log.warn{background:#fef2e9}

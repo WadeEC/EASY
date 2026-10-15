@@ -11,17 +11,21 @@ const SIZE_OPTS = ["YS", "YM", "YL", "AS", "AM", "AL"];
 
 // Self-service kiosk (parent & kid view). One intake that accepts a name, the last 4 of a
 // phone, or a scanned key tag — then shows your team, field, and coach. Full screen, no sidebar.
-export default function ScanIn() {
+export default function ScanIn({ go }) {
   // The active check-in week is set on the admin Team Board and stored as a
   // league-wide setting. Fall back to the current calendar week when nothing is
   // set so the kiosk still works on day one of the season.
-  const [week, setWeek] = useState(() => toISO(weekStart(new Date())));
+  // boardWeek = the Team Board's active week. A kiosk can override it from the
+  // staff panel (kf.week); `week` is whichever one this device actually uses.
+  const [boardWeek, setWeek] = useState(() => toISO(weekStart(new Date())));
+  const [weekList, setWeekList] = useState([]);
   useEffect(() => {
     let cancel = false;
     const refresh = async () => {
       try {
         const s = await api.activeWeekGet();
         if (!cancel && s && s.week) setWeek(s.week);
+        if (!cancel && s && Array.isArray(s.weekList)) setWeekList(s.weekList);
       } catch {}
     };
     refresh();
@@ -30,6 +34,20 @@ export default function ScanIn() {
     const id = setInterval(refresh, 60000);
     return () => { cancel = true; clearInterval(id); };
   }, []);
+  // League/division THIS device is set to. Saved in this browser only, so each
+  // kiosk (Mac, iPad, Chromebook…) can be set up for its own field. Staff change
+  // it from the panel behind the 3-second title hold. Blank = everyone.
+  const [kf, setKf] = useState({ league: "", division: "", week: "" });
+  const week = kf.week || boardWeek;
+  const [staffOpen, setStaffOpen] = useState(false);
+  useEffect(() => {
+    try { const v = JSON.parse(localStorage.getItem("ff_kiosk_filter") || "{}"); setKf({ league: v.league || "", division: v.division || "", week: v.week || "" }); } catch {}
+  }, []);
+  function saveKf(next) {
+    setKf(next);
+    try { localStorage.setItem("ff_kiosk_filter", JSON.stringify(next)); } catch {}
+    setGroups(null); setSearched(false); setQ(""); setConfirming({});
+  }
   const [q, setQ] = useState("");
   const [groups, setGroups] = useState(null);
   const [searched, setSearched] = useState(false);
@@ -40,6 +58,9 @@ export default function ScanIn() {
   const [err, setErr] = useState({});   // player id -> string
   const [success, setSuccess] = useState(null); // { player, size } — full-screen success after check-in
   const [moreBelow, setMoreBelow] = useState(false);
+  // Touch pop-up: opens when the search box is tapped (the touch monitor has no
+  // physical keyboard), closes once a name is picked for check-in.
+  const [padOpen, setPadOpen] = useState(false);
   const inputRef = useRef(null);
   const timer = useRef(null);
   const successTimer = useRef(null);
@@ -57,6 +78,42 @@ export default function ScanIn() {
   function scrollMoreIntoView() {
     if (endRef.current) endRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
   }
+
+  // LOCKDOWN — this is a public screen, so nobody should be able to wander off it.
+  // What a web page CAN stop on its own:
+  //   • Back / forward: we push an extra history entry and, whenever someone goes
+  //     back, push the kiosk right back on. (This listener is added before the
+  //     page's own popstate handler, so that handler re-reads the kiosk URL.)
+  //   • Right-click / long-press menus, dragging things out, text selection.
+  //   • Browser shortcuts like Cmd/Ctrl+L, R, T, N, [, ] and F5.
+  // What it CANNOT stop: quitting the browser or switching apps (Cmd+Q, Cmd+Tab).
+  // For that, run the kiosk in Chrome's --kiosk mode — see KIOSK.md.
+  // Staff panel: press and hold the title for 3 seconds (league/division, exit).
+  useEffect(() => {
+    const here = window.location.href;
+    window.history.pushState({ v: "scanin" }, "", here);
+    const onPop = () => window.history.pushState({ v: "scanin" }, "", here);
+    const block = (e) => e.preventDefault();
+    const onKey = (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (e.key === "F5" || (mod && /^[lrtnwp\[\]]$/i.test(e.key)) || (e.altKey && /^Arrow(Left|Right)$/.test(e.key))) e.preventDefault();
+    };
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("contextmenu", block);
+    window.addEventListener("dragstart", block);
+    window.addEventListener("keydown", onKey, true);
+    document.body.classList.add("kiosk-locked");
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("contextmenu", block);
+      window.removeEventListener("dragstart", block);
+      window.removeEventListener("keydown", onKey, true);
+      document.body.classList.remove("kiosk-locked");
+    };
+  }, []);
+  const holdTimer = useRef(null);
+  const holdStart = () => { clearTimeout(holdTimer.current); holdTimer.current = setTimeout(() => setStaffOpen(true), 3000); };
+  const holdEnd = () => clearTimeout(holdTimer.current);
 
   // glowing "connected" indicator — light health ping to the local server
   useEffect(() => {
@@ -79,7 +136,7 @@ export default function ScanIn() {
   }, [success]);
 
   async function run(query) {
-    try { const res = await api.kioskSearch({ method: "auto", query }); setGroups(res.groups || []); setSearched(true); setConnected(true); return res.groups || []; }
+    try { const res = await api.kioskSearch({ method: "auto", query, league: kf.league, division: kf.division, week }); setGroups(res.groups || []); setSearched(true); setConnected(true); return res.groups || []; }
     catch { setConnected(false); return []; }
   }
   function onChange(v) {
@@ -90,15 +147,21 @@ export default function ScanIn() {
   }
   async function submit() {
     clearTimeout(timer.current);
+    setPadOpen(false);
     if (q.trim().length < 2) return;
     const gs = await run(q.trim());
     const all = gs.flatMap((g) => g.players);
     if (all.length === 1) startConfirm(all[0]); // a scan / unique match → open the size-confirm gate
   }
-  function reset() { setQ(""); setGroups(null); setSearched(false); setChecked({}); setConfirming({}); setErr({}); inputRef.current?.focus(); }
+  function reset() { setPadOpen(false); setQ(""); setGroups(null); setSearched(false); setChecked({}); setConfirming({}); setErr({}); inputRef.current?.focus(); }
   function startConfirm(p) {
-    setConfirming((c) => ({ ...c, [p.id]: { size: p.jersey_size || "", ok: false } }));
+    setPadOpen(false);
+    setConfirming({ [p.id]: { size: p.jersey_size || "", ok: false } }); // one player at a time
     setErr((e) => ({ ...e, [p.id]: "" }));
+  }
+  function pickFromPad(p) {
+    startConfirm(p);
+    setTimeout(() => document.getElementById("kr-" + p.id)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
   }
   function cancelConfirm(p) {
     setConfirming((c) => { const n = { ...c }; delete n[p.id]; return n; });
@@ -142,6 +205,10 @@ export default function ScanIn() {
   if (success) {
     const p = success.player;
     const isLight = p.jersey_color === "light";
+    const weekGames = p.week_games || [];
+    // Two games with different colors → the big box says "LIGHT / DARK" and the
+    // game rows below say which is which.
+    const jerseyText = [...new Set(weekGames.map((g) => g.jersey).filter(Boolean))].join(" / ").toUpperCase() || (p.jersey_color || "").toUpperCase();
     const coachList = (p.coaches && p.coaches.length) ? headFirst(p.coaches) : [];
     return (
       <div style={{ position: "fixed", inset: 0, background: "linear-gradient(180deg, #0b1535 0%, #1a2858 100%)", color: "#fff", display: "flex", flexDirection: "column", zIndex: 999 }}>
@@ -168,17 +235,29 @@ export default function ScanIn() {
               display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 130,
             }}>
               <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.6, textTransform: "uppercase", letterSpacing: 1.5 }}>Jersey</div>
-              <div style={{ fontSize: 38, fontWeight: 900, lineHeight: 1, marginTop: 6, letterSpacing: 1.5 }}>{p.jersey_color ? p.jersey_color.toUpperCase() : "—"}</div>
+              <div style={{ fontSize: 38, fontWeight: 900, lineHeight: 1, marginTop: 6, letterSpacing: 1.5 }}>{jerseyText || "—"}</div>
               <div style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>
-                {p.next?.home_away === "home" ? "Home" : p.next?.home_away === "away" ? "Away" : ""}
+                {weekGames.length > 1 ? "See games below" : p.next?.home_away === "home" ? "Home" : p.next?.home_away === "away" ? "Away" : ""}
                 {success.size ? `${p.next?.home_away ? " · " : ""}size ${success.size}` : ""}
               </div>
             </div>
           </div>
 
-          {p.next && p.next.vs && (
-            <div style={{ marginTop: 12, fontSize: 14, opacity: 0.75 }}>
-              First game: <b>vs {p.next.vs}</b>{p.next.date ? ` · ${fmtDate(p.next.date)}` : ""}
+          {/* Every game this team plays this week — one row each, with its own
+              jersey color, because a team can be home in one game and away in
+              the next. Hidden when nothing is scheduled. */}
+          {weekGames.length > 0 && (
+            <div style={{ marginTop: 16, width: "100%", maxWidth: 1100, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.6, textTransform: "uppercase", letterSpacing: 1.5 }}>
+                {weekGames.length > 1 ? `Your ${weekGames.length} games` : "Your game"}
+              </div>
+              {weekGames.map((g, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, padding: "10px 16px", textAlign: "left" }}>
+                  <div style={{ fontSize: 16, fontWeight: 800, minWidth: 140 }}>{[fmtDate(g.date), g.time].filter(Boolean).join(" · ") || "Time TBD"}</div>
+                  <div style={{ flex: 1, fontSize: 16 }}>vs <b>{g.vs || "TBD"}</b>{g.location ? ` · ${g.location}` : ""}</div>
+                  <JerseyChip color={g.jersey} homeAway={g.home_away} />
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -200,24 +279,50 @@ export default function ScanIn() {
     );
   }
 
+  // Once someone is picked for check-in, show ONLY that player — the other
+  // matches disappear so nobody confirms the wrong kid. Cancel brings them back.
+  const focusId = Object.keys(confirming)[0] || null;
+  const shown = (groups || [])
+    .map((g) => ({ ...g, players: focusId ? g.players.filter((p) => String(p.id) === focusId) : g.players }))
+    .filter((g) => g.players.length);
+
   return (
     <div className="kiosk">
       <div className="kiosk-head">
         <div>
-          <div className="kiosk-title"><span>Flag</span> Football · Find my team</div>
+          <div className="kiosk-title" onPointerDown={holdStart} onPointerUp={holdEnd} onPointerLeave={holdEnd} onPointerCancel={holdEnd}><span>Flag</span> Football · Find my team</div>
           <div className="muted small">Look yourself up, then tap Check in for the day.</div>
+          {/* Always visible so staff can confirm at a glance this kiosk is set right. */}
+          <div className="small" style={{ marginTop: 4, fontWeight: 700, color: "var(--brand)" }}>
+            {kf.league || "All leagues"} · {kf.division || "All divisions"} · {(weekList.find((w) => w.week === week) || {}).label || `Week of ${fmtDate(week)}`}
+          </div>
         </div>
         <span className={"conn" + (connected ? "" : " off")} title={connected ? "Connected" : "Not connected"}>
           <span className="dot" />{connected ? "Connected" : "Offline"}
         </span>
       </div>
 
+      {staffOpen && <KioskStaffPanel kf={kf} week={week} boardWeek={boardWeek} weekList={weekList} onSave={(n) => { saveKf(n); setStaffOpen(false); }}
+        onExit={() => go && go({ page: "stations" })} onClose={() => setStaffOpen(false)} />}
+
       <div className="kiosk-card">
         <div className="scan-bar">
           <input ref={inputRef} autoFocus placeholder="Type a name, last 4 of your phone, or scan your key tag…"
-            value={q} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+            value={q} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            onClick={() => setPadOpen(true)} />
           {q ? <button className="btn" onClick={reset}>Clear</button> : <button className="btn primary" onClick={submit}>Find</button>}
         </div>
+        {padOpen && (
+          <TouchPad
+            q={q}
+            matches={(groups || []).flatMap((g) => g.players).filter((p) => !checked[p.id])}
+            onKey={(k) => onChange(q + k)}
+            onBack={() => onChange(q.slice(0, -1))}
+            onPick={pickFromPad}
+            onFind={submit}
+            onClose={() => setPadOpen(false)}
+          />
+        )}
         <div className="muted small" style={{ marginTop: 10 }}>
           Three ways to look up: by <b>name</b>, the <b>last 4 digits</b> of a parent phone, or <b>scan a key tag</b>. Siblings show up together.
         </div>
@@ -230,9 +335,9 @@ export default function ScanIn() {
         </div>
       )}
 
-      {groups && groups.map((g) => (
+      {shown.map((g) => (
         <div className="kiosk-card" style={{ marginTop: 16 }} key={g.key}>
-          {g.players.length > 1 && <div className="hh-label">{g.label}</div>}
+          {!focusId && g.players.length > 1 && <div className="hh-label">{g.label}</div>}
           <div className="stack" style={{ gap: 14 }}>
             {g.players.map((p) => {
               const session = checked[p.id];
@@ -240,7 +345,7 @@ export default function ScanIn() {
               const isBusy = !!busy[p.id];
               const errMsg = err[p.id] || "";
               return (
-                <div className={"kresult" + (session ? " checked" : "")} key={p.id}>
+                <div className={"kresult" + (session ? " checked" : "")} key={p.id} id={"kr-" + p.id}>
                   <div className="between" style={{ marginBottom: 12 }}>
                     <div className="kr-name" style={{ marginBottom: 0 }}>{p.name}{p.age !== "" ? <span className="muted"> · {p.age}</span> : null}{p.division ? <span className="muted"> · {p.division}</span> : null}</div>
                     {session
@@ -292,7 +397,7 @@ export default function ScanIn() {
 
       <div ref={endRef} aria-hidden="true" style={{ height: 1 }} />
 
-      {moreBelow && groups && groups.length > 1 && (
+      {moreBelow && !focusId && shown.length > 1 && (
         <button
           onClick={scrollMoreIntoView}
           aria-label="Scroll to more results"
@@ -307,6 +412,89 @@ export default function ScanIn() {
           More matches below
         </button>
       )}
+    </div>
+  );
+}
+
+// Staff-only settings for this kiosk device, opened by holding the title 3s.
+// League/division options come from the same board data staff already use.
+function KioskStaffPanel({ kf, week, boardWeek, weekList, onSave, onExit, onClose }) {
+  const [league, setLeague] = useState(kf.league);
+  const [division, setDivision] = useState(kf.division);
+  const [wk, setWk] = useState(kf.week || "");   // "" = follow the Team Board
+  const boardLabel = (weekList.find((w) => w.week === boardWeek) || {}).label || boardWeek;
+  const [opts, setOpts] = useState({ leagues: [], players: [], divisions: [] });
+  useEffect(() => {
+    api.boardData(week).then((r) => { if (r && Array.isArray(r.players)) setOpts({ leagues: r.leagues || [], players: r.players, divisions: r.divisions || [] }); }).catch(() => {});
+  }, [week]);
+  // Only divisions that have players in the chosen league.
+  const inLeague = new Set(opts.players.filter((p) => !league || p.league === league).map((p) => p.division).filter(Boolean));
+  const divs = opts.divisions.filter((d) => inLeague.has(d));
+  for (const d of inLeague) if (!divs.includes(d)) divs.push(d);
+  return (
+    <div className="overlay" style={{ zIndex: 1000 }}>
+      <div className="modal" style={{ maxWidth: 460 }}>
+        <h2 style={{ marginBottom: 4 }}>Kiosk settings</h2>
+        <div className="muted small" style={{ marginBottom: 14 }}>Staff only. Saved on this device — each kiosk can show a different league or division.</div>
+        <label className="fld">League</label>
+        <select value={league} onChange={(e) => { setLeague(e.target.value); setDivision(""); }}>
+          <option value="">All leagues</option>
+          {opts.leagues.map((l) => <option key={l} value={l}>{l}</option>)}
+        </select>
+        <label className="fld" style={{ marginTop: 10 }}>Division</label>
+        <select value={division} onChange={(e) => setDivision(e.target.value)}>
+          <option value="">All divisions</option>
+          {divs.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <label className="fld" style={{ marginTop: 10 }}>Week</label>
+        <select value={wk} onChange={(e) => setWk(e.target.value)}>
+          <option value="">Same as Team Board ({boardLabel})</option>
+          {weekList.filter((w) => !w.cancelled).map((w) => <option key={w.week} value={w.week}>{w.label}</option>)}
+        </select>
+        <div className="btn-row" style={{ marginTop: 18 }}>
+          <button className="btn primary" onClick={() => onSave({ league, division, week: wk })}>Save</button>
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn ghost" style={{ marginLeft: "auto" }} onClick={onExit}>Exit kiosk → Stations</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Pop-up touch keyboard for the kiosk. The touch monitor has no physical keyboard
+// (and macOS shows no on-screen one), so tapping the search box opens this.
+// Top row: matching names as they type — tap one to go straight to its check-in,
+// which closes the pop-up. Every key uses onPointerDown + preventDefault so the
+// search input keeps focus (a key-tag scanner can still type into it).
+const PAD_ROWS = ["1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+function TouchPad({ q, matches, onKey, onBack, onPick, onFind, onClose }) {
+  const tap = (fn) => (e) => { e.preventDefault(); fn(); };
+  return (
+    <div className="tpad" onPointerDown={(e) => e.preventDefault()}>
+      <div className="tpad-names">
+        {q.trim().length < 2
+          ? <span className="muted small">Start typing a name — matches show up here.</span>
+          : matches.length
+            ? matches.slice(0, 6).map((p) => (
+                <button key={p.id} className="tpad-name" onPointerDown={tap(() => onPick(p))}>
+                  {p.name}{p.team ? <span className="muted"> · {p.team}</span> : null}
+                </button>
+              ))
+            : <span className="muted small">No matches yet.</span>}
+      </div>
+      {PAD_ROWS.map((row) => (
+        <div className="tpad-row" key={row}>
+          {row.split("").map((k) => (
+            <button key={k} className="tpad-key" onPointerDown={tap(() => onKey(k))}>{k}</button>
+          ))}
+        </div>
+      ))}
+      <div className="tpad-row">
+        <button className="tpad-key wide" onPointerDown={tap(onClose)}>Hide</button>
+        <button className="tpad-key space" onPointerDown={tap(() => onKey(" "))}>space</button>
+        <button className="tpad-key wide" onPointerDown={tap(onBack)}>⌫</button>
+        <button className="tpad-key wide go" onPointerDown={tap(onFind)}>Find</button>
+      </div>
     </div>
   );
 }
@@ -348,5 +536,21 @@ function CountdownChip({ expiresAt }) {
     }}>
       Closes in {remaining}s
     </div>
+  );
+}
+
+// Small LIGHT / DARK pill for one game row on the check-in success screen.
+// Looks like the jersey it names: white pill for light, near-black for dark.
+function JerseyChip({ color, homeAway }) {
+  if (!color) return null;
+  const light = color === "light";
+  return (
+    <span style={{
+      background: light ? "#fff" : "#0b0f1d", color: light ? "#111" : "#fff",
+      border: "2px solid " + (light ? "#ffd166" : "#3b4574"),
+      borderRadius: 999, padding: "4px 14px", fontSize: 13, fontWeight: 900, letterSpacing: 1, whiteSpace: "nowrap",
+    }}>
+      {color.toUpperCase()}{homeAway ? ` · ${homeAway === "home" ? "Home" : "Away"}` : ""}
+    </span>
   );
 }

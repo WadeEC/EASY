@@ -177,7 +177,12 @@ export default function Board({ go }) {
   async function toggleRow(p) {
     await api.boardToggle({ player_id: p.id, player: p.name, week, present: !p.present });
     await load();
-    if (result && result.player && result.player.id === p.id) { const r = await api.boardDetail({ player_id: p.id, week }); setResult(r); }
+    // Checking someone in fills the details panel with them straight away.
+    // Checking out only refreshes the panel if it's already showing that player.
+    if (!p.present || (result && result.player && result.player.id === p.id)) {
+      const r = await api.boardDetail({ player_id: p.id, week });
+      if (r && r.player) { setResult(r); setPicks(null); }
+    }
   }
   function onScanKey(e) {
     if (e.key !== "Enter" || !scanQ.trim()) return;
@@ -511,6 +516,7 @@ function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
   const [sizeErr, setSizeErr] = useState("");
   const [present, setPresent] = useState(data.status !== "checked_out");
   const p = data.player;
+  const jerseyText = [...new Set((data.games || []).map((g) => g.jersey).filter(Boolean))].join(" / ").toUpperCase() || String(data.jerseyColor || "").toUpperCase();
   // The sizes the league actually stocks, from the field itself.
   let sizeOpts = [];
   try {
@@ -559,6 +565,10 @@ function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
       <div className="stack" style={{ gap: 8, marginBottom: 12 }}>
         <div className="kr-cell"><div className="kr-label">Team</div><div className="kr-val">{data.team || "Not assigned"}</div></div>
         <div className="kr-cell"><div className="kr-label">Field</div><div className="kr-val">{data.field || "TBD"}</div></div>
+        {/* Jersey color for this week's game: home = LIGHT, away = DARK. Two
+            games with different sides shows both ("LIGHT / DARK"); the game
+            list below says which is which. */}
+        <div className="kr-cell"><div className="kr-label">Jersey color</div><div className="kr-val">{jerseyText || "TBD"}{data.games && data.games.length === 1 && data.homeAway ? <span className="muted small" style={{ fontWeight: 400 }}> · {data.homeAway === "home" ? "Home" : "Away"}</span> : null}</div></div>
         <div className="kr-cell"><div className="kr-label">Coach</div><div className="kr-val">{data.coaches.length ? headFirst(data.coaches).map((c) => c.name + (/head/i.test(c.role) ? " (H)" : "")).join(", ") : "TBD"}</div></div>
       </div>
 
@@ -590,11 +600,11 @@ function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <div className="kr-label" style={{ marginBottom: 4 }}>Game times for the day</div>
+        <div className="kr-label" style={{ marginBottom: 4 }}>{data.games && data.games.length > 1 ? `This week's ${data.games.length} games` : "This week's game"}</div>
         {data.games && data.games.length
-          ? <div className="stack" style={{ gap: 6 }}>{data.games.slice(0, 4).map((g, i) => (
+          ? <div className="stack" style={{ gap: 6 }}>{data.games.map((g, i) => (
               <div className="drag-item" key={i} style={{ cursor: "default" }}>
-                <span>vs <b>{g.vs || "TBD"}</b>{g.location ? ` · ${g.location}` : ""}</span>
+                <span>vs <b>{g.vs || "TBD"}</b>{g.location ? ` · ${g.location}` : ""}{g.jersey ? <> · <b>{g.jersey.toUpperCase()}</b></> : null}</span>
                 <span className="muted small">{[fmtDate(g.date), g.time].filter(Boolean).join(" ")}</span>
               </div>))}</div>
           : <div className="muted small">No games scheduled yet.</div>}

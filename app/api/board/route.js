@@ -1,6 +1,7 @@
 import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAttendance, flagsForPlayer, ensurePlayerNotes, ensurePlayerKeyTag, divisionOptions, divisionOf, leagueOptions,} from "@/lib/tools.js";
 import { bindRequest, getActor } from "@/lib/actor.js";
 import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
+import { gamesForWeek, jerseyFor } from "@/lib/game-day.js";
 
 export const dynamic = "force-dynamic";
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
@@ -15,22 +16,28 @@ function playerIssues(p) {
   return issues;
 }
 
-function scanDetail(p) {
+// Everything the "Check-in details" panel shows for one player. `week` is the
+// check-in week (Sunday ISO) — the jersey color and field come from the team's
+// game in that week, same rule as the kiosk (lib/game-day.js).
+function scanDetail(p, week) {
   const team = p.team || "";
   const coaches = getRecords("coach")
     .map((r) => { const d = parse(r.data); return { name: r.name || d.full_name || `#${r.id}`, role: d.role || "", team: d.team || "" }; })
     .filter((c) => team && c.team === team)
     .map((c) => ({ name: c.name, role: c.role }));
-  const games = getRecords("game").map((r) => parse(r.data))
-    .filter((g) => team && (g.home_team === team || g.away_team === team))
-    .sort((a, b) => (Number(a.week) || 0) - (Number(b.week) || 0))
-    .map((g) => ({ week: g.week, date: g.date || "", time: g.time || "", location: g.location || "", vs: (g.home_team === team ? g.away_team : g.home_team) || "" }));
-  const field = (games[0] && games[0].location) || p.league || "";
+  // This week's games only (both of them on a double-header), each with its
+  // own jersey color. The Field / Jersey boxes use the first one.
+  const games = gamesForWeek(getRecords("game").map((r) => parse(r.data)), team, String(week || ""))
+    .map((g) => ({ week: g.week, date: g.date || "", time: g.time || "", location: g.location || "", vs: (g.home_team === team ? g.away_team : g.home_team) || "", jersey: jerseyFor(g, team), homeAway: g.home_team === team ? "home" : "away" }));
+  const thisGame = games[0] || null;
+  const jerseyColor = thisGame ? thisGame.jersey : "";
+  const field = (thisGame && thisGame.location) || p.league || "";
   return {
     player: { id: p.id, name: p.name, age: p.age ?? "", division: divisionOf(p), league: p.league || "" },
     team, coaches, field, games, notes: p.notes || "", flags: flagsForPlayer(p),
     jerseySize: p.jersey_size || "", jerseyIssued: p.jersey_issued === true,
     sizeConfirmedAt: p.size_confirmed_at || "", sizeConfirmedBy: p.size_confirmed_by || "",
+    jerseyColor, homeAway: thisGame ? thisGame.homeAway : "",
     issues: playerIssues(p),
   };
 }
@@ -70,7 +77,7 @@ export async function POST(req) {
     const p = matches[0];
     const already = getCheckins(b.week).has(p.id);
     if (!already) setCheckin(p.id, p.name, b.week, true);
-    return Response.json({ status: already ? "already" : "checked_in", ...scanDetail(p) });
+    return Response.json({ status: already ? "already" : "checked_in", ...scanDetail(p, b.week) });
   }
 
   if (b.action === "scan_id") {
@@ -79,7 +86,7 @@ export async function POST(req) {
     if (!p) return Response.json({ status: "not_found" });
     const already = getCheckins(b.week).has(p.id);
     if (!already) setCheckin(p.id, p.name, b.week, true);
-    return Response.json({ status: already ? "already" : "checked_in", ...scanDetail(p) });
+    return Response.json({ status: already ? "already" : "checked_in", ...scanDetail(p, b.week) });
   }
 
   if (b.action === "detail") {
@@ -88,7 +95,7 @@ export async function POST(req) {
     const p = all.find((x) => x.id === Number(b.player_id));
     if (!p) return Response.json({ status: "not_found" });
     const present = getCheckins(b.week).has(p.id);
-    return Response.json({ status: present ? "already" : "checked_out", ...scanDetail(p) });
+    return Response.json({ status: present ? "already" : "checked_out", ...scanDetail(p, b.week) });
   }
 
   if (b.action === "note") {
