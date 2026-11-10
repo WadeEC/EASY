@@ -73,7 +73,7 @@ export default function DivisionsSettings({ onAsk }) {
           {divisions.map((d) => editId === d.id ? (
             <div className="card" key={d.id} style={{ background: "var(--line-soft)", marginBottom: 0 }}>
               <div className="row">
-                <div><label className="fld">Name</label><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
+                <div><label className="fld">Name</label><input type="text" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
                 <div>
                   <label className="fld">League</label>
                   <select value={draft.league} onChange={(e) => setDraft({ ...draft, league: e.target.value })}>
@@ -110,7 +110,7 @@ export default function DivisionsSettings({ onAsk }) {
       <div className="card">
         <h3>Add a division</h3>
         <div className="row">
-          <div><label className="fld">Name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ages 9-10" /></div>
+          <div><label className="fld">Name</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ages 9-10" /></div>
           <div>
             <label className="fld">League</label>
             <select value={league} onChange={(e) => setLeague(e.target.value)}>
@@ -129,7 +129,7 @@ export default function DivisionsSettings({ onAsk }) {
           <div className="aibox-head"><span className="ai-badge">S-Dot</span> Add with S-Dot</div>
           <p className="muted small">e.g. “ages 9 to 10 division” or “set up divisions for ages 4 to 17”.</p>
           <div className="aibar">
-            <input placeholder="Describe a division…" value={ai} onChange={(e) => setAi(e.target.value)}
+            <input type="text" placeholder="Describe a division…" value={ai} onChange={(e) => setAi(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submitAi(); }} />
             <button className="btn primary" onClick={submitAi}>Create with S-Dot</button>
           </div>

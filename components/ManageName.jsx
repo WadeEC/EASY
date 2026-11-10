@@ -27,11 +27,13 @@ function usageText(u) {
 // names: every existing name of that kind (for the "move to" list)
 // extra(name): optional extra controls for a row (e.g. the league lock button)
 // onChanged(result): reload the page data after a change
-export default function ManageNameList({ kind, names, extra, onChanged, setFlash, render }) {
+// all: every name of this kind, when `names` is only a filtered view — the
+// "move to" list still offers all of them.
+export default function ManageNameList({ kind, names, all, extra, onChanged, setFlash, render }) {
   return (
     <div className="stack" style={{ marginTop: 14 }}>
       {names.map((n) => (
-        <ManageNameRow key={n} kind={kind} name={n} others={names.filter((x) => x !== n)}
+        <ManageNameRow key={n} kind={kind} name={n} others={(all || names).filter((x) => x !== n)}
           extra={extra} onChanged={onChanged} setFlash={setFlash} render={render} />
       ))}
     </div>
@@ -97,7 +99,7 @@ function ManageNameRow({ kind, name, others, extra, onChanged, setFlash, render 
       <div className="between" style={{ gap: 8, flexWrap: "wrap" }}>
         {mode === "rename" ? (
           <div className="addbar" style={{ flex: 1, minWidth: 240 }}>
-            <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
+            <input type="text" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") saveRename(); if (e.key === "Escape") setMode(null); }} />
             <button className="btn primary" disabled={busy} onClick={saveRename}>{busy ? "Saving…" : "Save"}</button>
             <button className="btn ghost" onClick={() => setMode(null)}>Cancel</button>

@@ -169,7 +169,7 @@ export default function TeamSettings({ onAsk }) {
         <div className="aibox-head"><span className="ai-badge">S-Dot</span> Link players or add a rule</div>
         <p className="muted small">Describe what you want in plain English — keep certain players together, or add a build rule — and S-Dot drafts it for you to confirm.</p>
         <div className="aibar">
-          <input placeholder="e.g. keep Mia and Eli together, or cap all-stars at 2 per team" value={aiRule}
+          <input type="text" placeholder="e.g. keep Mia and Eli together, or cap all-stars at 2 per team" value={aiRule}
             onChange={(e) => setAiRule(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitAiRule(); }} />
           <button className="btn primary" onClick={submitAiRule}>Ask S-Dot</button>
         </div>
@@ -189,7 +189,7 @@ export default function TeamSettings({ onAsk }) {
             if (editId === r.id) return (
               <div className="card" key={r.id} style={{ background: "var(--line-soft)", marginBottom: 0, gridColumn: "1 / -1" }}>
                 <label className="fld">Rule name</label>
-                <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                <input type="text" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
                 {hasField && (
                   <>
                     <label className="fld" style={{ marginTop: 8 }}>{r.type === "balance" ? "Spread evenly by" : r.type === "cap" ? "Limit players marked" : "Keep together players with the same"}</label>
@@ -270,7 +270,7 @@ export default function TeamSettings({ onAsk }) {
               ))}
             </div>
             <div className="row" style={{ marginTop: 6, alignItems: "center", gap: 6 }}>
-              <input
+              <input type="text"
                 defaultValue={info.reason}
                 placeholder="Reason (e.g. Carpool — Smith family)"
                 onBlur={async (e) => {
@@ -291,12 +291,12 @@ export default function TeamSettings({ onAsk }) {
         <div className="subpanel">
           <div className="subpanel-head">Add players to a group</div>
           <label className="fld">Group name</label>
-          <input placeholder="e.g. Carpool A" value={groupName} onChange={(e) => setGroupName(e.target.value)} />
+          <input type="text" placeholder="e.g. Carpool A" value={groupName} onChange={(e) => setGroupName(e.target.value)} />
           <label className="fld">Reason (optional — shown as override note)</label>
-          <input placeholder="e.g. Carpool — Smith family, coach pre-arrangement"
+          <input type="text" placeholder="e.g. Carpool — Smith family, coach pre-arrangement"
             value={groupReason} onChange={(e) => setGroupReason(e.target.value)} />
           <label className="fld">Find a player to add</label>
-          <input placeholder="Type a name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input type="text" placeholder="Type a name…" value={search} onChange={(e) => setSearch(e.target.value)} />
           {search.trim() && (
             <div className="find-results">
               {players.filter(matches).slice(0, 8).map((p) => (
@@ -353,7 +353,7 @@ export default function TeamSettings({ onAsk }) {
                     ))}
                   </div>
                   <div className="row" style={{ marginTop: 6, alignItems: "center", gap: 6 }}>
-                    <input
+                    <input type="text"
                       defaultValue={g.reason || ""}
                       placeholder="Reason (optional)"
                       onBlur={async (e) => {
@@ -409,7 +409,7 @@ export default function TeamSettings({ onAsk }) {
           )}
 
           <label className="fld" style={{ marginTop: 10 }}>Players</label>
-          <input placeholder="Search players…" value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} />
+          <input type="text" placeholder="Search players…" value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} />
           <div className="find-results" style={{ maxHeight: 220, overflow: "auto" }}>
             {players
               .filter((p) => !pickerSearch.trim() || p.name.toLowerCase().includes(pickerSearch.trim().toLowerCase()))
@@ -431,7 +431,7 @@ export default function TeamSettings({ onAsk }) {
           )}
 
           <label className="fld" style={{ marginTop: 10 }}>Reason (optional)</label>
-          <input placeholder="e.g. cousins / parental request / classroom conflict"
+          <input type="text" placeholder="e.g. cousins / parental request / classroom conflict"
             value={newReason} onChange={(e) => setNewReason(e.target.value)} />
 
           <div className="btn-row" style={{ marginTop: 10 }}>

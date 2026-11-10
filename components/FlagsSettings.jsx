@@ -74,7 +74,7 @@ export default function FlagsSettings({ onAsk }) {
           {cfg.flags.map((f) => editId === f.id ? (
             <div className="card" key={f.id} style={{ background: "var(--line-soft)", marginBottom: 0 }}>
               <label className="fld">Flag name</label>
-              <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+              <input type="text" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
               {/* Field-based flags: change what they test. Built-in flags
                   (attendance) only change their name / week count. */}
               {(!f.kind || f.kind === "field") && (
@@ -92,7 +92,7 @@ export default function FlagsSettings({ onAsk }) {
                     </select>
                   </div>
                   {needsValue(draft.op) && (
-                    <div><label className="fld">Value</label><input value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></div>
+                    <div><label className="fld">Value</label><input type="text" value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></div>
                   )}
                 </div>
               )}
@@ -160,13 +160,13 @@ export default function FlagsSettings({ onAsk }) {
           {needsValue(op) && (
             <div>
               <label className="fld">Value</label>
-              <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. 13" />
+              <input type="text" value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. 13" />
             </div>
           )}
         </div>
         <label className="fld">Label (shown on Home)</label>
         <div className="addbar">
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Missing jersey size" />
+          <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Missing jersey size" />
           <button className="btn primary" onClick={addFlag}>Add flag</button>
         </div>
 
@@ -174,7 +174,7 @@ export default function FlagsSettings({ onAsk }) {
           <div className="aibox-head"><span className="ai-badge">S-Dot</span> Add a flag with S-Dot</div>
           <p className="muted small">Describe it — e.g. “flag players with no jersey size” or “players age 13 or older”. S-Dot drafts it and you confirm.</p>
           <div className="aibar">
-            <input placeholder="Describe a flag…" value={aiText} onChange={(e) => setAiText(e.target.value)}
+            <input type="text" placeholder="Describe a flag…" value={aiText} onChange={(e) => setAiText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submitAi(); }} />
             <button className="btn primary" onClick={submitAi}>Create with S-Dot</button>
           </div>
@@ -230,7 +230,7 @@ function PressQueueCard() {
         )}
       </td>
       <td style={{ whiteSpace: "nowrap" }}>
-        <input
+        <input type="text"
           placeholder="Reason (optional)"
           value={reasonDraft[p.id] ?? p.override_reason ?? ""}
           onChange={(e) => setReasonDraft((d) => ({ ...d, [p.id]: e.target.value }))}

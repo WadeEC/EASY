@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api.js";
+import { api, currentSeason, ALL_SEASONS } from "@/lib/api.js";
 import TeamSettings from "./TeamSettings.jsx";
 import FlagsSettings from "./FlagsSettings.jsx";
 import DivisionsSettings from "./DivisionsSettings.jsx";
@@ -19,6 +19,15 @@ export default function Leagues({ refresh, onAsk }) {
   const [tab, setTab] = useState("townships");
   const [aiRule, setAiRule] = useState("");
   const [locks, setLocks] = useState([]);
+  // Leagues tab filter: "season" = only the leagues in the season picked in
+  // the sidebar (its league list on the Seasons tab); "all" = every league.
+  const [lgScope, setLgScope] = useState("season");
+  const [leaguesBySeason, setLeaguesBySeason] = useState({});
+  const [lgSearch, setLgSearch] = useState("");
+  // Every season name (for "adopt rules from …") and the adopt picker state.
+  const [seasonNames, setSeasonNames] = useState([]);
+  const [adoptFrom, setAdoptFrom] = useState("");
+  const [adoptPick, setAdoptPick] = useState(new Set());
   const [reassigning, setReassigning] = useState(false);
 
   // assignment builder
@@ -31,6 +40,11 @@ export default function Leagues({ refresh, onAsk }) {
     setPlayer(full.schema?.player || null);
     const a = await api.assignment("player");
     setRules(a.rules || []);
+    try {
+      const si = await api.seasonsList();
+      setLeaguesBySeason((si && si.leaguesBySeason) || {});
+      setSeasonNames((si && si.seasons) || []);
+    } catch { setLeaguesBySeason({}); }
     try {
       const lr = await api.leagueLocks();
       setLocks(lr.locks || []);
@@ -61,6 +75,16 @@ export default function Leagues({ refresh, onAsk }) {
   const opts = (n) => { const f = field(n); return f && Array.isArray(f.options) ? f.options : []; };
   const townships = opts("township");
   const leagues = opts("league");
+  // The season picked in the sidebar ("" / ALL_SEASONS = all seasons) and the
+  // leagues it runs. A season with no league list set can't be filtered, so
+  // the tab shows every league with a note.
+  const sn = currentSeason();
+  const snName = sn === ALL_SEASONS ? "" : sn;
+  const snLeagues = snName ? (leaguesBySeason[snName] || []) : [];
+  const canFilter = !!snName && snLeagues.length > 0;
+  const showAll = lgScope === "all" || !canFilter;
+  const scoped = showAll ? leagues : leagues.filter((l) => snLeagues.includes(l));
+  const shownLeagues = lgSearch.trim() ? scoped.filter((l) => l.toLowerCase().includes(lgSearch.trim().toLowerCase())) : scoped;
   const fieldNames = player.fields.map((f) => f.name);
 
   async function addOption(fieldName, value, clear) {
@@ -68,6 +92,41 @@ export default function Leagues({ refresh, onAsk }) {
     const res = await api.option("player", fieldName, value.trim());
     setFlash(res.error ? { ok: false, text: res.error } : { ok: true, text: "Added." });
     clear(""); await load(); refresh && refresh();
+  }
+
+  // Add a league. While viewing one season's leagues, the new league is also
+  // added to that season's list, so it shows up here instead of vanishing.
+  async function addLeague() {
+    const v = newLg.trim();
+    if (!v) return;
+    const res = await api.option("player", "league", v);
+    if (res.error) { setFlash({ ok: false, text: res.error }); return; }
+    if (!showAll && !snLeagues.includes(v)) await api.seasonSetLeagues(snName, [...snLeagues, v]);
+    setFlash({ ok: true, text: !showAll ? `Added "${v}" to ${snName}.` : `Added "${v}".` });
+    setNewLg(""); await load(); refresh && refresh();
+  }
+
+  // ---- assignment rules per season ----------------------------------------
+  // A rule belongs to one season, or to every season (season ""). The tab shows
+  // the rules that apply in the sidebar's season: its own + the shared ones.
+  const seasonRules = snName ? rules.filter((r) => !r.season || r.season === snName) : rules;
+  const adoptable = adoptFrom ? rules.filter((r) => r.season === adoptFrom) : [];
+  function pickAdoptFrom(sn) {
+    setAdoptFrom(sn);
+    setAdoptPick(new Set(rules.filter((r) => r.season === sn).map((r) => r.id)));
+  }
+  async function adoptNow() {
+    if (!adoptPick.size) return setFlash({ ok: false, text: "Tick at least one rule to adopt." });
+    const res = await api.rulesAdopt([...adoptPick], snName);
+    if (res.error) return setFlash({ ok: false, text: res.error });
+    setFlash({ ok: true, text: `Adopted ${res.adopted} rule${res.adopted === 1 ? "" : "s"} into ${snName}${res.skipped ? ` (${res.skipped} already there)` : ""}. Press "Reassign all players" to apply them to players already in ${snName}.` });
+    setAdoptFrom(""); setAdoptPick(new Set()); await load();
+  }
+  async function ruleSeason(r, season) {
+    const res = await api.ruleSetSeason(r.id, season);
+    if (res.error) return setFlash({ ok: false, text: res.error });
+    setFlash({ ok: true, text: season ? `"${r.name}" now only applies to ${season}.` : `"${r.name}" now applies to every season.` });
+    await load();
   }
 
   async function saveRule() {
@@ -144,7 +203,7 @@ export default function Leagues({ refresh, onAsk }) {
           : <div className="muted small">No townships yet.</div>}
         <label className="fld">Add a township</label>
         <div className="addbar">
-          <input placeholder="New township name" value={newTwp} onChange={(e) => setNewTwp(e.target.value)}
+          <input type="text" placeholder="New township name" value={newTwp} onChange={(e) => setNewTwp(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") addOption("township", newTwp, setNewTwp); }} />
           <button className="btn primary" onClick={() => addOption("township", newTwp, setNewTwp)}>Add township</button>
         </div>
@@ -153,13 +212,27 @@ export default function Leagues({ refresh, onAsk }) {
 
       {tab === "leagues" && (
       <div className="card">
-        <div className="between"><h2 style={{ margin: 0 }}>Leagues</h2>{leagues.length > 0 && <span className="chip">{leagues.length}</span>}</div>
+        <div className="between"><h2 style={{ margin: 0 }}>Leagues</h2>{shownLeagues.length > 0 && <span className="chip">{shownLeagues.length}</span>}</div>
         <p className="muted small">The groups players are routed into by your assignment rules.</p>
+        {/* Filter: this season's leagues, or every league. */}
+        <div className="btn-row" style={{ marginBottom: 4 }}>
+          <button className={"pill" + (!showAll ? " active" : "")} disabled={!canFilter}
+            title={canFilter ? "" : snName ? `${snName} has no league list yet — set one on the Seasons tab.` : "Pick a season in the sidebar to filter."}
+            onClick={() => setLgScope("season")}>
+            {snName ? `This season · ${snName}` : "This season"}{canFilter ? ` (${leagues.filter((l) => snLeagues.includes(l)).length})` : ""}
+          </button>
+          <button className={"pill" + (showAll ? " active" : "")} onClick={() => setLgScope("all")}>All leagues ({leagues.length})</button>
+        </div>
+        {!snName && <div className="muted small">Showing every league. Pick a season in the sidebar to see only that season's leagues.</div>}
+        {snName && !canFilter && <div className="muted small">{snName} has no league list yet, so every league is shown. Choose its leagues on the Seasons tab (Edit leagues).</div>}
+        {leagues.length > 5 && (
+          <input type="text" style={{ marginTop: 8, width: "100%" }} placeholder="Search leagues…" value={lgSearch} onChange={(e) => setLgSearch(e.target.value)} />
+        )}
         {/* One row per league: lock/unlock the roster, Rename (changes the name
             on every player, game, coach, division, season list, lock, blackout
             and rule), or Delete (refused while in use — offers a move). */}
-        {leagues.length ? (
-          <ManageNameList kind="league" names={leagues} setFlash={setFlash}
+        {shownLeagues.length ? (
+          <ManageNameList kind="league" names={shownLeagues} all={leagues} setFlash={setFlash}
             onChanged={async () => { await load(); refresh && refresh(); }}
             render={(lg) => {
               const lk = locks.find((l) => l.league === lg);
@@ -170,12 +243,12 @@ export default function Leagues({ refresh, onAsk }) {
               const isLocked = !!(lk && lk.locked);
               return <button className="btn sm" onClick={async () => { await api.setLeagueLock(lg, !isLocked); await load(); }}>{isLocked ? "Unlock" : "Lock roster"}</button>;
             }} />
-        ) : <div className="muted small">No leagues yet.</div>}
+        ) : <div className="muted small">{lgSearch.trim() ? `No leagues match "${lgSearch.trim()}".` : "No leagues yet."}</div>}
         <label className="fld">Add a league</label>
         <div className="addbar">
-          <input placeholder="New league name" value={newLg} onChange={(e) => setNewLg(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") addOption("league", newLg, setNewLg); }} />
-          <button className="btn primary" onClick={() => addOption("league", newLg, setNewLg)}>Add league</button>
+          <input type="text" placeholder="New league name" value={newLg} onChange={(e) => setNewLg(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addLeague(); }} />
+          <button className="btn primary" onClick={addLeague}>Add league</button>
         </div>
       </div>
       )}
@@ -184,8 +257,13 @@ export default function Leagues({ refresh, onAsk }) {
       <div className="card">
         <div className="between" style={{ alignItems: "flex-start" }}>
           <div>
-            <h2 style={{ marginBottom: 4 }}>Assignment rules</h2>
-            <p className="muted small" style={{ marginTop: 0 }}>If a player matches ALL conditions, they’re routed to the chosen league — automatically, when added or imported.</p>
+            <h2 style={{ marginBottom: 4 }}>Assignment rules{snName ? ` · ${snName}` : ""}</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>
+              If a player matches ALL conditions, they’re routed to the chosen league — automatically, when added or imported.
+              {snName
+                ? ` Each season has its own rules; "All seasons" rules apply everywhere. New rules are added to ${snName}.`
+                : " Showing every season's rules — pick a season in the sidebar to see and edit just that season's."}
+            </p>
           </div>
           <button
             className="btn"
@@ -197,13 +275,48 @@ export default function Leagues({ refresh, onAsk }) {
           </button>
         </div>
         <div className="stack">
-          {rules.map((r) => (
+          {seasonRules.map((r) => (
             <AssignmentRuleRow key={r.id} rule={r} fieldNames={fieldNames} leagues={leagues} setFlash={setFlash}
-              onDelete={async () => { if (!window.confirm(`Delete the rule "${r.name}"?`)) return; await api.deleteAssignment(r.id); await load(); }}
+              seasonChip={<span className={"chip" + (r.season ? " brand" : "")} style={{ marginLeft: 6 }}>{r.season || "All seasons"}</span>}
+              extra={snName ? (r.season
+                ? <button className="btn ghost sm" title="Use this rule in every season" onClick={() => ruleSeason(r, "")}>Share</button>
+                : <button className="btn ghost sm" title={`Stop using this rule in other seasons`} onClick={() => ruleSeason(r, snName)}>{snName} only</button>) : null}
+              onDelete={async () => { if (!window.confirm(`Delete the rule "${r.name}"${r.season ? "" : " from every season"}?`)) return; await api.deleteAssignment(r.id); await load(); }}
               onSaved={load} />
           ))}
-          {!rules.length && <div className="muted small">No assignment rules yet.</div>}
+          {!seasonRules.length && <div className="muted small">No assignment rules{snName ? ` for ${snName}` : ""} yet.</div>}
         </div>
+
+        {/* Adopt: copy rules from another season into this one. Copies are
+            independent — editing them doesn't change the old season's rules. */}
+        {snName && seasonNames.some((n) => n !== snName && rules.some((r) => r.season === n)) && (
+          <div className="card" style={{ background: "var(--line-soft)", marginTop: 12, marginBottom: 0 }}>
+            <div className="small" style={{ marginBottom: 6 }}><b>Adopt rules from another season</b> into {snName}</div>
+            <select value={adoptFrom} onChange={(e) => pickAdoptFrom(e.target.value)} style={{ width: "auto" }}>
+              <option value="">Pick a season…</option>
+              {seasonNames.filter((n) => n !== snName && rules.some((r) => r.season === n)).map((n) => (
+                <option key={n} value={n}>{n} ({rules.filter((r) => r.season === n).length} rules)</option>
+              ))}
+            </select>
+            {adoptFrom && (
+              <>
+                <div className="stack" style={{ gap: 4, marginTop: 8, maxHeight: 220, overflowY: "auto" }}>
+                  {adoptable.map((r) => (
+                    <label key={r.id} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input type="checkbox" style={{ width: "auto" }} checked={adoptPick.has(r.id)}
+                        onChange={() => setAdoptPick((p) => { const n = new Set(p); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })} />
+                      <span><b>{r.name}</b> — {r.conditions.map((c) => `${c.field} ${c.op} ${c.value}`).join(" and ") || "(any)"} → {r.set_value}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="btn-row" style={{ marginTop: 8 }}>
+                  <button className="btn primary sm" onClick={adoptNow}>Adopt {adoptPick.size} rule{adoptPick.size === 1 ? "" : "s"}</button>
+                  <button className="btn ghost sm" onClick={() => { setAdoptFrom(""); setAdoptPick(new Set()); }}>Cancel</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="divider" />
         <div className="aibox" style={{ marginBottom: 0 }}>
@@ -230,10 +343,51 @@ export default function Leagues({ refresh, onAsk }) {
   );
 }
 
+// Searchable league checklist (Edit leagues, Start a season). With lots of
+// leagues the plain list got long, so: the picked ones show as chips on top
+// (tap × to un-pick), a search box filters the rest, and the list scrolls
+// inside a fixed height instead of pushing the page down.
+export function LeaguePicker({ leagues, picked, onToggle }) {
+  const [q, setQ] = useState("");
+  const [onlyPicked, setOnlyPicked] = useState(false);
+  const needle = q.trim().toLowerCase();
+  const shown = leagues.filter((lg) => (!needle || lg.toLowerCase().includes(needle)) && (!onlyPicked || picked.has(lg)));
+  return (
+    <div>
+      {picked.size > 0 && (
+        <div className="chip-well" style={{ marginBottom: 6 }}>
+          {[...picked].map((lg) => (
+            <span className="chip brand" key={lg}>
+              {lg}{" "}
+              <button type="button" className="btn ghost sm" style={{ padding: "0 4px", minHeight: 0 }} aria-label={`Remove ${lg}`} onClick={() => onToggle(lg)}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="addbar" style={{ marginBottom: 6, alignItems: "center" }}>
+        <input type="text" placeholder={`Search ${leagues.length} leagues…`} value={q} onChange={(e) => setQ(e.target.value)} />
+        <label className="small" style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+          <input type="checkbox" style={{ width: "auto" }} checked={onlyPicked} onChange={(e) => setOnlyPicked(e.target.checked)} />
+          Picked only
+        </label>
+      </div>
+      <div className="stack" style={{ gap: 4, maxHeight: 220, overflowY: "auto", paddingRight: 4 }}>
+        {shown.map((lg) => (
+          <label key={lg} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" style={{ width: "auto" }} checked={picked.has(lg)} onChange={() => onToggle(lg)} />
+            {lg}
+          </label>
+        ))}
+        {!shown.length && <div className="muted small">No leagues match "{q}".</div>}
+      </div>
+    </div>
+  );
+}
+
 // One assignment rule: shows "if … → league = X", with Edit (name, every
 // condition, and the league it routes to) and Delete. Saving only changes the
 // rule; existing players move when "Reassign all players" is pressed.
-function AssignmentRuleRow({ rule, fieldNames, leagues, setFlash, onDelete, onSaved }) {
+function AssignmentRuleRow({ rule, fieldNames, leagues, setFlash, onDelete, onSaved, seasonChip, extra }) {
   const [edit, setEdit] = useState(null); // draft { name, conditions, set_value } while editing
   const summary = rule.conditions.map((c) => `${c.field} ${c.op} ${c.value}`).join("  and  ") || "(any)";
 
@@ -256,8 +410,9 @@ function AssignmentRuleRow({ rule, fieldNames, leagues, setFlash, onDelete, onSa
   if (!edit) {
     return (
       <div className="between" style={{ borderBottom: "1px solid var(--line-soft)", paddingBottom: 8 }}>
-        <div className="small"><b>{rule.name}</b> — if {summary} → <b>{rule.set_field} = {rule.set_value}</b></div>
+        <div className="small"><b>{rule.name}</b>{seasonChip} — if {summary} → <b>{rule.set_field} = {rule.set_value}</b></div>
         <div className="btn-row">
+          {extra}
           <button className="btn ghost sm" onClick={open}>Edit</button>
           <button className="btn ghost sm" onClick={onDelete}>Delete</button>
         </div>
@@ -267,7 +422,7 @@ function AssignmentRuleRow({ rule, fieldNames, leagues, setFlash, onDelete, onSa
   return (
     <div className="card" style={{ background: "var(--line-soft)", marginBottom: 0 }}>
       <label className="fld">Rule name</label>
-      <input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
+      <input type="text" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
       <label className="fld" style={{ marginTop: 8 }}>If ALL of these match</label>
       <div className="stack" style={{ gap: 6 }}>
         {edit.conditions.map((c, i) => (
@@ -278,7 +433,7 @@ function AssignmentRuleRow({ rule, fieldNames, leagues, setFlash, onDelete, onSa
             <select value={c.op} onChange={(e) => setCond(i, "op", e.target.value)} style={{ width: "auto" }}>
               {[...new Set([c.op, ...OPS])].map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
-            <input value={c.value} onChange={(e) => setCond(i, "value", e.target.value)} placeholder="value" />
+            <input type="text" value={c.value} onChange={(e) => setCond(i, "value", e.target.value)} placeholder="value" />
             <button className="btn ghost sm" onClick={() => setEdit({ ...edit, conditions: edit.conditions.filter((_, j) => j !== i) })}>Remove</button>
           </div>
         ))}
@@ -412,14 +567,7 @@ function SeasonsSettings({ refresh }) {
         {editFor && (
           <div className="card" style={{ marginTop: 8, background: "var(--line-soft)" }}>
             <div className="small" style={{ marginBottom: 6 }}>Leagues in <b>{editFor}</b></div>
-            <div className="stack" style={{ gap: 4 }}>
-              {allLeagues.map((lg) => (
-                <label key={lg} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input type="checkbox" style={{ width: "auto" }} checked={editPicked.has(lg)} onChange={() => togglePick(editPicked, setEditPicked, lg)} />
-                  {lg}
-                </label>
-              ))}
-            </div>
+            <LeaguePicker leagues={allLeagues} picked={editPicked} onToggle={(lg) => togglePick(editPicked, setEditPicked, lg)} />
             <div className="btn-row" style={{ marginTop: 8 }}>
               <button className="btn primary sm" onClick={saveLeagues}>Save leagues</button>
             </div>
@@ -434,22 +582,15 @@ function SeasonsSettings({ refresh }) {
           Adopting a league name from a past season carries its assignment rules and age divisions forward automatically.
         </p>
         <label className="fld">Season name</label>
-        <input placeholder="e.g. Fall 2026" value={name} onChange={(e) => setName(e.target.value)} />
+        <input type="text" style={{ width: "100%" }} placeholder="e.g. Fall 2026" value={name} onChange={(e) => setName(e.target.value)} />
         {allLeagues.length > 0 && (
           <>
             <label className="fld" style={{ marginTop: 10 }}>Adopt leagues from past seasons</label>
-            <div className="stack" style={{ gap: 4 }}>
-              {allLeagues.map((lg) => (
-                <label key={lg} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input type="checkbox" style={{ width: "auto" }} checked={picked.has(lg)} onChange={() => togglePick(picked, setPicked, lg)} />
-                  {lg}
-                </label>
-              ))}
-            </div>
+            <LeaguePicker leagues={allLeagues} picked={picked} onToggle={(lg) => togglePick(picked, setPicked, lg)} />
           </>
         )}
         <label className="fld" style={{ marginTop: 10 }}>Or add new league(s) — comma separated</label>
-        <input placeholder="e.g. Saturday Phoenixville" value={newLeagues} onChange={(e) => setNewLeagues(e.target.value)}
+        <input type="text" style={{ width: "100%" }} placeholder="e.g. Saturday Phoenixville" value={newLeagues} onChange={(e) => setNewLeagues(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") start(); }} />
         <div className="btn-row" style={{ marginTop: 12 }}>
           <button className="btn primary" disabled={busy} onClick={start}>{busy ? "Starting…" : "Start season"}</button>
@@ -466,7 +607,7 @@ function SeasonsSettings({ refresh }) {
             does NOT change the current season.)
           </p>
           <div className="addbar">
-            <input placeholder="e.g. Spring 2026" value={backLabel} onChange={(e) => setBackLabel(e.target.value)}
+            <input type="text" placeholder="e.g. Spring 2026" value={backLabel} onChange={(e) => setBackLabel(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") backfill(); }} />
             <button className="btn primary" disabled={busy} onClick={backfill}>{busy ? "Tagging…" : `Tag ${info.untagged} player${info.untagged === 1 ? "" : "s"}`}</button>
           </div>

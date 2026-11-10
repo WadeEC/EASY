@@ -6,7 +6,7 @@ import { bindRequest } from "@/lib/actor.js";
 import {
   choiceUsage, renameChoice, deleteChoice,
   seasonUsage, renameSeason, deleteSeason,
-  updateFlag, updateTeamRule,
+  updateFlag, updateTeamRule, adoptRules, setRuleSeason,
 } from "@/lib/manage.js";
 import { updateAssignmentRule, updateDivision } from "@/lib/tools.js";
 
@@ -32,6 +32,9 @@ export async function POST(req) {
       case "division_edit":   return Response.json(updateDivision(b.id, b));
       case "flag_edit":       return Response.json(updateFlag(b.id, b));
       case "team_rule_edit":  return Response.json(updateTeamRule(b.id, b));
+      // assignment rules per season
+      case "rules_adopt":     return Response.json(adoptRules(b.ids, b.season));
+      case "rule_season":     return Response.json(setRuleSeason(b.id, b.season));
     }
     return Response.json({ error: "unknown action" });
   } catch (e) {
