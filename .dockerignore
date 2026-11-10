@@ -10,3 +10,4 @@ _db-backups
 .ai-pending-changes
 .env*
 .DS_Store
+backups

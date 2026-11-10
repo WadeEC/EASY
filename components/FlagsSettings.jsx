@@ -21,6 +21,9 @@ export default function FlagsSettings({ onAsk }) {
   const [op, setOp] = useState("empty");
   const [value, setValue] = useState("");
   const [label, setLabel] = useState("");
+  // Inline edit: the flag being edited and its draft values.
+  const [editId, setEditId] = useState(null);
+  const [draft, setDraft] = useState({});
 
   async function load() {
     const c = await api.flags();
@@ -68,7 +71,48 @@ export default function FlagsSettings({ onAsk }) {
         <h2>Home flags</h2>
         <p className="muted small">Each flag shows a live count on the Home “At a glance” row — a quick way to watch for things like players with no league.</p>
         <div className="rule-list">
-          {cfg.flags.map((f) => (
+          {cfg.flags.map((f) => editId === f.id ? (
+            <div className="card" key={f.id} style={{ background: "var(--line-soft)", marginBottom: 0 }}>
+              <label className="fld">Flag name</label>
+              <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+              {/* Field-based flags: change what they test. Built-in flags
+                  (attendance) only change their name / week count. */}
+              {(!f.kind || f.kind === "field") && (
+                <div className="row" style={{ marginTop: 8 }}>
+                  <div>
+                    <label className="fld">Field</label>
+                    <select value={draft.field} onChange={(e) => setDraft({ ...draft, field: e.target.value })}>
+                      {fieldsOf(f.record_type).map((x) => <option key={x.name} value={x.name}>{x.label || x.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="fld">Test</label>
+                    <select value={draft.op} onChange={(e) => setDraft({ ...draft, op: e.target.value })}>
+                      {ops.map((o) => <option key={o} value={o}>{OP_LABEL[o] || o}</option>)}
+                    </select>
+                  </div>
+                  {needsValue(draft.op) && (
+                    <div><label className="fld">Value</label><input value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></div>
+                  )}
+                </div>
+              )}
+              {f.kind === "attendance" && (
+                <div style={{ marginTop: 8 }}>
+                  <label className="fld">Weeks to check</label>
+                  <input type="number" min={1} value={draft.weeks} onChange={(e) => setDraft({ ...draft, weeks: e.target.value })} style={{ width: 120 }} />
+                </div>
+              )}
+              <div className="btn-row" style={{ marginTop: 10 }}>
+                <button className="btn primary sm" onClick={async () => {
+                  const res = await api.flagEdit(f.id, draft);
+                  if (res.error) return setFlash({ ok: false, text: res.error });
+                  setFlash({ ok: true, text: `Saved flag "${res.name}".` });
+                  setEditId(null); load();
+                }}>Save flag</button>
+                <button className="btn ghost sm" onClick={() => setEditId(null)}>Cancel</button>
+              </div>
+            </div>
+          ) : (
             <div className={"rule-row" + (f.active ? "" : " off")} key={f.id}>
               <div className="rule-ico kt">{FLAG_ICO}</div>
               <div className="rule-main">
@@ -78,7 +122,8 @@ export default function FlagsSettings({ onAsk }) {
               <button className={"switch" + (f.active ? " on" : "")} aria-label={f.active ? "On" : "Off"}
                 title={f.active ? "On — click to turn off" : "Off — click to turn on"}
                 onClick={async () => { await api.flagToggle(f.id, !f.active); load(); }} />
-              <button className="btn ghost sm" onClick={async () => { await api.flagDel(f.id); load(); }}>Delete</button>
+              <button className="btn ghost sm" onClick={() => { setEditId(f.id); setDraft({ label: f.label, field: f.field || "", op: f.op || "empty", value: f.value ?? "", weeks: f.weeks || 2 }); }}>Edit</button>
+              <button className="btn ghost sm" onClick={async () => { if (!window.confirm(`Delete the flag "${f.label}"?`)) return; await api.flagDel(f.id); load(); }}>Delete</button>
             </div>
           ))}
           {!cfg.flags.length && <div className="muted small" style={{ marginTop: 4 }}>No flags yet — add one below.</div>}

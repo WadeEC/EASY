@@ -77,6 +77,9 @@ export default function TeamSettings({ onAsk }) {
   const [newPlayerIds, setNewPlayerIds] = useState([]); // numbers
   const [newCoachIds, setNewCoachIds] = useState([]);   // numbers (coach_player only)
   const [pickerSearch, setPickerSearch] = useState("");
+  // Inline edit of a team build rule: which rule, and its draft values.
+  const [editId, setEditId] = useState(null);
+  const [draft, setDraft] = useState({});
 
   async function load() {
     const c = await api.teamConfig();
@@ -179,6 +182,41 @@ export default function TeamSettings({ onAsk }) {
         <div className="rule-grid">
           {cfg.rules.map((r) => {
             const m = ruleMeta(r.type);
+            // Which settings a rule type has: balance / keep-together / cap test
+            // a player field (except the built-in "siblings" keep-together);
+            // cap also has a max. Coach-child has only its name.
+            const hasField = ["balance", "keep_together", "cap"].includes(r.type) && r.field !== "__siblings__";
+            if (editId === r.id) return (
+              <div className="card" key={r.id} style={{ background: "var(--line-soft)", marginBottom: 0, gridColumn: "1 / -1" }}>
+                <label className="fld">Rule name</label>
+                <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+                {hasField && (
+                  <>
+                    <label className="fld" style={{ marginTop: 8 }}>{r.type === "balance" ? "Spread evenly by" : r.type === "cap" ? "Limit players marked" : "Keep together players with the same"}</label>
+                    <select value={draft.field} onChange={(e) => setDraft({ ...draft, field: e.target.value })}>
+                      {[...new Set([draft.field, ...(cfg.fields || []).map((f) => f.name)])].map((f) => (
+                        <option key={f} value={f}>{(cfg.fields || []).find((x) => x.name === f)?.label || f}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                {r.type === "cap" && (
+                  <>
+                    <label className="fld" style={{ marginTop: 8 }}>Max per team</label>
+                    <input type="number" min={0} value={draft.max} onChange={(e) => setDraft({ ...draft, max: e.target.value })} style={{ width: 120 }} />
+                  </>
+                )}
+                <div className="btn-row" style={{ marginTop: 10 }}>
+                  <button className="btn primary sm" onClick={async () => {
+                    const res = await api.teamRuleEdit(r.id, { name: draft.name, ...(hasField ? { field: draft.field } : {}), ...(r.type === "cap" ? { max: Number(draft.max) } : {}) });
+                    if (res.error) return setFlash({ ok: false, text: res.error });
+                    setFlash({ ok: true, text: `Saved rule "${res.name}".` });
+                    setEditId(null); load();
+                  }}>Save rule</button>
+                  <button className="btn ghost sm" onClick={() => setEditId(null)}>Cancel</button>
+                </div>
+              </div>
+            );
             return (
               <div className={"rule-row" + (r.active ? "" : " off")} key={r.id}>
                 <div className={"rule-ico " + m.cls}>{m.ico}</div>
@@ -189,7 +227,11 @@ export default function TeamSettings({ onAsk }) {
                 <button className={"switch" + (r.active ? " on" : "")} aria-label={r.active ? "On" : "Off"}
                   title={r.active ? "On — click to turn off" : "Off — click to turn on"}
                   onClick={async () => { await api.teamToggleRule(r.id, !r.active); load(); }} />
-                <button className="btn ghost sm" onClick={async () => { await api.teamDelRule(r.id); load(); }}>Delete</button>
+                {/* Stacked so the two-column grid keeps room for the rule name. */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <button className="btn ghost sm" onClick={() => { setEditId(r.id); setDraft({ name: r.name, field: r.field || "", max: r.max ?? 2 }); }}>Edit</button>
+                  <button className="btn ghost sm" onClick={async () => { if (!window.confirm(`Delete the rule "${r.name}"?`)) return; await api.teamDelRule(r.id); load(); }}>Delete</button>
+                </div>
               </div>
             );
           })}

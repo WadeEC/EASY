@@ -395,7 +395,10 @@ function SeasonPicker({ reloadKey, onChanged }) {
         setUntagged(Number(s.untagged) || 0);
         let cur = null;
         try { cur = localStorage.getItem("ff_season"); } catch {}
-        if (cur == null) {
+        // A saved season that no longer exists (renamed or deleted from another
+        // device) would scope every page to nothing — fall back to the current one.
+        const known = (s.seasons || []).includes(cur);
+        if (cur == null || (cur !== "" && !known)) {
           cur = s.active || "";
           try { localStorage.setItem("ff_season", cur); } catch {}
         }

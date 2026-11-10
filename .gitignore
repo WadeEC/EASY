@@ -11,3 +11,7 @@ league.db-*
 _backups/
 _updates/
 _to_delete/
+
+# Snapshots lib/manage.js takes before a rename/move/delete
+backups/
+_db-backups/

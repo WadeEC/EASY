@@ -5,6 +5,7 @@ import TeamSettings from "./TeamSettings.jsx";
 import FlagsSettings from "./FlagsSettings.jsx";
 import DivisionsSettings from "./DivisionsSettings.jsx";
 import AiPromptBar from "./AiPromptBar.jsx";
+import ManageNameList from "./ManageName.jsx";
 
 const OPS = [">=", "<=", ">", "<", "==", "!="];
 
@@ -136,9 +137,11 @@ export default function Leagues({ refresh, onAsk }) {
       <div className="card">
         <div className="between"><h2 style={{ margin: 0 }}>Townships</h2>{townships.length > 0 && <span className="chip">{townships.length}</span>}</div>
         <p className="muted small">Where players register — used as import sources and in assignment rules.</p>
-        <div className="chip-well">
-          {townships.length ? townships.map((t) => <span className="chip accent lg" key={t}>{t}</span>) : <span className="muted small">No townships yet.</span>}
-        </div>
+        {/* Rename changes the township on every player and rule that uses it;
+            Delete is refused while players use it and offers a move instead. */}
+        {townships.length
+          ? <ManageNameList kind="township" names={townships} setFlash={setFlash} onChanged={async () => { await load(); refresh && refresh(); }} />
+          : <div className="muted small">No townships yet.</div>}
         <label className="fld">Add a township</label>
         <div className="addbar">
           <input placeholder="New township name" value={newTwp} onChange={(e) => setNewTwp(e.target.value)}
@@ -152,26 +155,22 @@ export default function Leagues({ refresh, onAsk }) {
       <div className="card">
         <div className="between"><h2 style={{ margin: 0 }}>Leagues</h2>{leagues.length > 0 && <span className="chip">{leagues.length}</span>}</div>
         <p className="muted small">The groups players are routed into by your assignment rules.</p>
-        <div className="chip-well">
-          {leagues.length ? leagues.map((t) => <span className="chip brand lg" key={t}>{t}</span>) : <span className="muted small">No leagues yet.</span>}
-        </div>
-        {leagues.length > 0 && (
-          <div className="stack" style={{ marginTop: 14 }}>
-            {leagues.map((lg) => {
+        {/* One row per league: lock/unlock the roster, Rename (changes the name
+            on every player, game, coach, division, season list, lock, blackout
+            and rule), or Delete (refused while in use — offers a move). */}
+        {leagues.length ? (
+          <ManageNameList kind="league" names={leagues} setFlash={setFlash}
+            onChanged={async () => { await load(); refresh && refresh(); }}
+            render={(lg) => {
+              const lk = locks.find((l) => l.league === lg);
+              return <><b>{lg}</b> <span className="muted small">{lk && lk.locked ? "🔒 Roster locked" : "Unlocked"}</span></>;
+            }}
+            extra={(lg) => {
               const lk = locks.find((l) => l.league === lg);
               const isLocked = !!(lk && lk.locked);
-              return (
-                <div className="between" key={lg} style={{ borderBottom: "1px solid var(--line-soft)", paddingBottom: 8 }}>
-                  <div><b>{lg}</b> <span className="muted small">{isLocked ? "🔒 Roster locked" : "Unlocked"}</span></div>
-                  <button className="btn" onClick={async () => {
-                    await api.setLeagueLock(lg, !isLocked);
-                    await load();
-                  }}>{isLocked ? "Unlock" : "Lock roster"}</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+              return <button className="btn sm" onClick={async () => { await api.setLeagueLock(lg, !isLocked); await load(); }}>{isLocked ? "Unlock" : "Lock roster"}</button>;
+            }} />
+        ) : <div className="muted small">No leagues yet.</div>}
         <label className="fld">Add a league</label>
         <div className="addbar">
           <input placeholder="New league name" value={newLg} onChange={(e) => setNewLg(e.target.value)}
@@ -199,10 +198,9 @@ export default function Leagues({ refresh, onAsk }) {
         </div>
         <div className="stack">
           {rules.map((r) => (
-            <div className="between" key={r.id} style={{ borderBottom: "1px solid var(--line-soft)", paddingBottom: 8 }}>
-              <div className="small"><b>{r.name}</b> — if {r.conditions.map((c) => `${c.field} ${c.op} ${c.value}`).join("  and  ") || "(any)"} → <b>{r.set_field} = {r.set_value}</b></div>
-              <button className="btn ghost sm" onClick={async () => { await api.deleteAssignment(r.id); await load(); }}>Delete</button>
-            </div>
+            <AssignmentRuleRow key={r.id} rule={r} fieldNames={fieldNames} leagues={leagues} setFlash={setFlash}
+              onDelete={async () => { if (!window.confirm(`Delete the rule "${r.name}"?`)) return; await api.deleteAssignment(r.id); await load(); }}
+              onSaved={load} />
           ))}
           {!rules.length && <div className="muted small">No assignment rules yet.</div>}
         </div>
@@ -228,6 +226,73 @@ export default function Leagues({ refresh, onAsk }) {
       {tab === "teams" && <TeamSettings onAsk={onAsk} />}
       {tab === "flags" && <FlagsSettings onAsk={onAsk} />}
       {tab === "moves" && <RosterMoves locks={locks} reloadLocks={load} setFlash={setFlash} />}
+    </div>
+  );
+}
+
+// One assignment rule: shows "if … → league = X", with Edit (name, every
+// condition, and the league it routes to) and Delete. Saving only changes the
+// rule; existing players move when "Reassign all players" is pressed.
+function AssignmentRuleRow({ rule, fieldNames, leagues, setFlash, onDelete, onSaved }) {
+  const [edit, setEdit] = useState(null); // draft { name, conditions, set_value } while editing
+  const summary = rule.conditions.map((c) => `${c.field} ${c.op} ${c.value}`).join("  and  ") || "(any)";
+
+  function open() {
+    setEdit({ name: rule.name, set_value: rule.set_value, conditions: rule.conditions.map((c) => ({ ...c })) });
+  }
+  const setCond = (i, key, v) => setEdit((e) => ({ ...e, conditions: e.conditions.map((c, j) => (j === i ? { ...c, [key]: v } : c)) }));
+
+  async function save() {
+    const conditions = edit.conditions.filter((c) => c.field && String(c.value).trim() !== "")
+      .map((c) => ({ field: c.field, op: c.op, value: String(c.value).trim() }));
+    if (!edit.name.trim()) return setFlash({ ok: false, text: "Give the rule a name." });
+    if (!conditions.length) return setFlash({ ok: false, text: "Keep at least one condition." });
+    const res = await api.assignmentEdit(rule.id, { name: edit.name.trim(), conditions, set_value: edit.set_value });
+    if (res.error) return setFlash({ ok: false, text: res.error });
+    setFlash({ ok: true, text: `Rule saved. Press "Reassign all players" to apply it to players already in the system.` });
+    setEdit(null); onSaved && onSaved();
+  }
+
+  if (!edit) {
+    return (
+      <div className="between" style={{ borderBottom: "1px solid var(--line-soft)", paddingBottom: 8 }}>
+        <div className="small"><b>{rule.name}</b> — if {summary} → <b>{rule.set_field} = {rule.set_value}</b></div>
+        <div className="btn-row">
+          <button className="btn ghost sm" onClick={open}>Edit</button>
+          <button className="btn ghost sm" onClick={onDelete}>Delete</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="card" style={{ background: "var(--line-soft)", marginBottom: 0 }}>
+      <label className="fld">Rule name</label>
+      <input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
+      <label className="fld" style={{ marginTop: 8 }}>If ALL of these match</label>
+      <div className="stack" style={{ gap: 6 }}>
+        {edit.conditions.map((c, i) => (
+          <div className="addbar" key={i}>
+            <select value={c.field} onChange={(e) => setCond(i, "field", e.target.value)} style={{ width: "auto" }}>
+              {[...new Set([c.field, ...fieldNames])].map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <select value={c.op} onChange={(e) => setCond(i, "op", e.target.value)} style={{ width: "auto" }}>
+              {[...new Set([c.op, ...OPS])].map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+            <input value={c.value} onChange={(e) => setCond(i, "value", e.target.value)} placeholder="value" />
+            <button className="btn ghost sm" onClick={() => setEdit({ ...edit, conditions: edit.conditions.filter((_, j) => j !== i) })}>Remove</button>
+          </div>
+        ))}
+        <button className="btn ghost sm" style={{ alignSelf: "flex-start" }}
+          onClick={() => setEdit({ ...edit, conditions: [...edit.conditions, { field: fieldNames[0] || "age", op: "==", value: "" }] })}>+ Add condition</button>
+      </div>
+      <label className="fld" style={{ marginTop: 8 }}>Then put them in league</label>
+      <select value={edit.set_value} onChange={(e) => setEdit({ ...edit, set_value: e.target.value })}>
+        {[...new Set([edit.set_value, ...leagues])].map((l) => <option key={l} value={l}>{l}</option>)}
+      </select>
+      <div className="btn-row" style={{ marginTop: 10 }}>
+        <button className="btn primary sm" onClick={save}>Save rule</button>
+        <button className="btn ghost sm" onClick={() => setEdit(null)}>Cancel</button>
+      </div>
     </div>
   );
 }
@@ -316,47 +381,50 @@ function SeasonsSettings({ refresh }) {
           A season is the container everything lives in: start it, choose its leagues, upload rosters
           into it. The sidebar picker scopes every page to one season.
         </p>
-        <div className="stack">
-          {seasons.map((s) => (
-            <div key={s} style={{ borderBottom: "1px solid var(--line-soft)", paddingBottom: 8 }}>
-              <div className="between">
-                <div>
-                  <b>{s}</b>{" "}
-                  <span className="muted small">· {counts[s] || 0} player{(counts[s] || 0) === 1 ? "" : "s"}</span>
-                  {info.active === s && <span className="chip" style={{ marginLeft: 8 }}>current</span>}
-                </div>
-                <div className="btn-row">
-                  <button className="btn ghost sm" onClick={() => {
-                    setEditFor(editFor === s ? null : s);
-                    setEditPicked(new Set(bySeason[s] || []));
-                  }}>{editFor === s ? "Close" : "Edit leagues"}</button>
-                  {info.active !== s && <button className="btn sm" onClick={() => makeActive(s)}>Make current</button>}
+        {/* Each season: Edit leagues, Make current, Rename (moves every record,
+            link, blackout and lock to the new name), Delete (refused while the
+            season has anything in it, or while it's the current season). */}
+        {seasons.length ? (
+          <ManageNameList kind="season" names={seasons} setFlash={setFlash}
+            onChanged={async () => { setEditFor(null); await load(); refresh && refresh(); }}
+            render={(s) => (
+              <div>
+                <b>{s}</b>{" "}
+                <span className="muted small">· {counts[s] || 0} player{(counts[s] || 0) === 1 ? "" : "s"}</span>
+                {info.active === s && <span className="chip" style={{ marginLeft: 8 }}>current</span>}
+                <div className="chip-well" style={{ marginTop: 6 }}>
+                  {(bySeason[s] || []).length
+                    ? (bySeason[s] || []).map((lg) => <span className="chip brand" key={lg}>{lg}</span>)
+                    : <span className="muted small">All leagues (no per-season list set)</span>}
                 </div>
               </div>
-              <div className="chip-well" style={{ marginTop: 6 }}>
-                {(bySeason[s] || []).length
-                  ? (bySeason[s] || []).map((lg) => <span className="chip brand" key={lg}>{lg}</span>)
-                  : <span className="muted small">All leagues (no per-season list set)</span>}
-              </div>
-              {editFor === s && (
-                <div className="card" style={{ marginTop: 8, background: "var(--line-soft)" }}>
-                  <div className="stack" style={{ gap: 4 }}>
-                    {allLeagues.map((lg) => (
-                      <label key={lg} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <input type="checkbox" style={{ width: "auto" }} checked={editPicked.has(lg)} onChange={() => togglePick(editPicked, setEditPicked, lg)} />
-                        {lg}
-                      </label>
-                    ))}
-                  </div>
-                  <div className="btn-row" style={{ marginTop: 8 }}>
-                    <button className="btn primary sm" onClick={saveLeagues}>Save leagues</button>
-                  </div>
-                </div>
-              )}
+            )}
+            extra={(s) => (
+              <>
+                <button className="btn ghost sm" onClick={() => {
+                  setEditFor(editFor === s ? null : s);
+                  setEditPicked(new Set(bySeason[s] || []));
+                }}>{editFor === s ? "Close" : "Edit leagues"}</button>
+                {info.active !== s && <button className="btn sm" onClick={() => makeActive(s)}>Make current</button>}
+              </>
+            )} />
+        ) : <div className="muted small">No seasons yet — start your first below.</div>}
+        {editFor && (
+          <div className="card" style={{ marginTop: 8, background: "var(--line-soft)" }}>
+            <div className="small" style={{ marginBottom: 6 }}>Leagues in <b>{editFor}</b></div>
+            <div className="stack" style={{ gap: 4 }}>
+              {allLeagues.map((lg) => (
+                <label key={lg} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" style={{ width: "auto" }} checked={editPicked.has(lg)} onChange={() => togglePick(editPicked, setEditPicked, lg)} />
+                  {lg}
+                </label>
+              ))}
             </div>
-          ))}
-          {!seasons.length && <div className="muted small">No seasons yet — start your first below.</div>}
-        </div>
+            <div className="btn-row" style={{ marginTop: 8 }}>
+              <button className="btn primary sm" onClick={saveLeagues}>Save leagues</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="card">

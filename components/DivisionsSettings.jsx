@@ -18,6 +18,9 @@ export default function DivisionsSettings({ onAsk }) {
   const [hi, setHi] = useState("");
   const [ai, setAi] = useState("");
   const [busy, setBusy] = useState(false);
+  // Inline edit: the division being edited and its draft values.
+  const [editId, setEditId] = useState(null);
+  const [draft, setDraft] = useState({});
 
   async function load() { setCfg(await api.divisionsList()); }
   useEffect(() => { load(); }, []);
@@ -39,7 +42,20 @@ export default function DivisionsSettings({ onAsk }) {
     setFlash({ ok: true, text: `Standard divisions ready — ${res.added} added, ${res.reassigned} player(s) sorted.` });
     await load();
   }
-  async function del(id) { await api.divisionDel(id); await load(); }
+  async function del(d) {
+    if (!window.confirm(`Delete the division "${d.name}"? Players in it will be re-sorted into whichever division fits their age.`)) return;
+    await api.divisionDel(d.id); await load();
+  }
+  // Save an edited division. The server re-sorts every player afterwards, so a
+  // changed age range (or a renamed division) shows up on players right away.
+  async function saveEdit() {
+    if (!String(draft.name || "").trim()) return setFlash({ ok: false, text: "Name the division." });
+    if (draft.age_min === "" || draft.age_max === "") return setFlash({ ok: false, text: "Set the min and max age." });
+    const res = await api.divisionEdit(editId, { name: draft.name.trim(), league: draft.league || "", age_min: Number(draft.age_min), age_max: Number(draft.age_max) });
+    if (res.error) return setFlash({ ok: false, text: res.error });
+    setFlash({ ok: true, text: `Saved "${draft.name.trim()}" — players re-sorted.` });
+    setEditId(null); await load();
+  }
   function submitAi() {
     const t = ai.trim(); if (!t) return;
     if (onAsk) onAsk(`Create a division: ${t}`);
@@ -54,14 +70,34 @@ export default function DivisionsSettings({ onAsk }) {
         <div className="between"><h2 style={{ margin: 0 }}>Divisions (age groups)</h2>{divisions.length > 0 && <span className="chip">{divisions.length}</span>}</div>
         <p className="muted small">Players are sorted automatically into the division whose age range fits — within their league. Aim to cover ages 4–17.</p>
         <div className="rule-list">
-          {divisions.map((d) => (
+          {divisions.map((d) => editId === d.id ? (
+            <div className="card" key={d.id} style={{ background: "var(--line-soft)", marginBottom: 0 }}>
+              <div className="row">
+                <div><label className="fld">Name</label><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
+                <div>
+                  <label className="fld">League</label>
+                  <select value={draft.league} onChange={(e) => setDraft({ ...draft, league: e.target.value })}>
+                    <option value="">All leagues</option>
+                    {[...new Set([draft.league, ...leagues].filter(Boolean))].map((l) => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </div>
+                <div><label className="fld">Min age</label><input type="number" value={draft.age_min} onChange={(e) => setDraft({ ...draft, age_min: e.target.value })} /></div>
+                <div><label className="fld">Max age</label><input type="number" value={draft.age_max} onChange={(e) => setDraft({ ...draft, age_max: e.target.value })} /></div>
+              </div>
+              <div className="btn-row" style={{ marginTop: 10 }}>
+                <button className="btn primary sm" onClick={saveEdit}>Save division</button>
+                <button className="btn ghost sm" onClick={() => setEditId(null)}>Cancel</button>
+              </div>
+            </div>
+          ) : (
             <div className="rule-row" key={d.id}>
               <div className="rule-ico kt">{DIV_ICO}</div>
               <div className="rule-main">
                 <div className="nm">{d.name}</div>
                 <div className="ty">ages {d.age_min}–{d.age_max}{d.league ? ` · ${d.league}` : " · all leagues"}</div>
               </div>
-              <button className="btn ghost sm" onClick={() => del(d.id)}>Delete</button>
+              <button className="btn ghost sm" onClick={() => { setEditId(d.id); setDraft({ name: d.name, league: d.league || "", age_min: d.age_min, age_max: d.age_max }); }}>Edit</button>
+              <button className="btn ghost sm" onClick={() => del(d)}>Delete</button>
             </div>
           ))}
           {!divisions.length && <div className="muted small" style={{ marginTop: 4 }}>No divisions yet — set up the standard set or add your own below.</div>}
