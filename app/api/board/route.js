@@ -2,19 +2,25 @@ import { getRecords, getFields, updateRecord, setCheckin, getCheckins, seedAtten
 import { bindRequest, getActor } from "@/lib/actor.js";
 import { seasonFromReq, inSeason, leaguesForSeason } from "@/lib/seasons.js";
 import { gamesForWeek, jerseyFor } from "@/lib/game-day.js";
+import { listItems, marksForWeek, itemsForPlayer, addItem, updateItem, deleteItem, setMark } from "@/lib/checkoffs.js";
 
 export const dynamic = "force-dynamic";
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch { return {}; } };
 const digits = (s) => String(s || "").replace(/\D+/g, "");
 
-// The red "needs attention" items for a player: missing jersey size, any alerts (flags), jersey not handed out.
-function playerIssues(p) {
+// The red "needs attention" items for a player: missing jersey size, any alerts
+// (flags), jersey not handed out, and any custom check-off (lib/checkoffs.js)
+// that applies this week and isn't ticked yet. `checks` = itemsForPlayer(...).
+function playerIssues(p, checks = []) {
   const issues = [];
   if (!String(p.jersey_size || "").trim()) issues.push("No jersey size");
   for (const f of flagsForPlayer(p)) issues.push(f);
   if (p.jersey_issued !== true) issues.push("Jersey not issued");
+  for (const c of checks) if (!c.done) issues.push(`Not done: ${c.label}`);
   return issues;
 }
+// A player's check-offs for this week. Division comes from the age brackets.
+const checksFor = (p, week, items, marks) => itemsForPlayer({ ...p, division: divisionOf(p) }, week, items, marks);
 
 // Everything the "Check-in details" panel shows for one player. `week` is the
 // check-in week (Sunday ISO) — the jersey color and field come from the team's
@@ -32,13 +38,14 @@ function scanDetail(p, week) {
   const thisGame = games[0] || null;
   const jerseyColor = thisGame ? thisGame.jersey : "";
   const field = (thisGame && thisGame.location) || p.league || "";
+  const checks = checksFor(p, week, listItems(), marksForWeek(week));
   return {
     player: { id: p.id, name: p.name, age: p.age ?? "", division: divisionOf(p), league: p.league || "" },
     team, coaches, field, games, notes: p.notes || "", flags: flagsForPlayer(p),
     jerseySize: p.jersey_size || "", jerseyIssued: p.jersey_issued === true,
     sizeConfirmedAt: p.size_confirmed_at || "", sizeConfirmedBy: p.size_confirmed_by || "",
     jerseyColor, homeAway: thisGame ? thisGame.homeAway : "",
-    issues: playerIssues(p),
+    checks, issues: playerIssues(p, checks),
   };
 }
 
@@ -50,10 +57,12 @@ export async function POST(req) {
   if (b.action === "board") {
     ensurePlayerNotes(); ensurePlayerKeyTag(); seedAttendance();
     const checked = getCheckins(b.week);
+    // Score every player's custom check-offs from one read of items + ticks.
+    const ckItems = listItems(), ckMarks = marksForWeek(b.week);
     const fields = getFields("player").map((f) => ({ name: f.name, label: f.label, data_type: f.data_type, required: !!f.required, options: f.options }));
     const players = getRecords("player").filter((r) => { let d = {}; try { d = JSON.parse(r.data || "{}"); } catch {} return inSeason(d, season); }).map((r) => {
       const d = parse(r.data);
-      const issues = playerIssues({ id: r.id, ...d });
+      const issues = playerIssues({ id: r.id, ...d }, checksFor({ id: r.id, ...d }, b.week, ckItems, ckMarks));
       return { id: r.id, name: r.name || d.full_name || `#${r.id}`, team: d.team || "", league: d.league || "", division: divisionOf(d), present: checked.has(r.id), data: d, issues, status: issues.length ? "flag" : "clear" };
     });
     return Response.json({
@@ -129,6 +138,13 @@ export async function POST(req) {
       "user(check-in)", "cleared jersey size at check-in");
     return Response.json(res.error ? { error: res.error } : { status: "ok", size: "", size_confirmed_at: "" });
   }
+  // ---- custom check-offs (lib/checkoffs.js) ----
+  if (b.action === "checkoffs_list") return Response.json({ items: listItems({ season: season || null }) });
+  if (b.action === "checkoff_add") return Response.json(addItem(b));
+  if (b.action === "checkoff_edit") return Response.json(updateItem(b.id, b));
+  if (b.action === "checkoff_del") return Response.json(deleteItem(b.id));
+  if (b.action === "checkoff_mark") return Response.json(setMark(b.item_id, b.player_id, b.week, !!b.done));
+
   if (b.action === "set_jersey") {
     const res = updateRecord(Number(b.player_id), { jersey_issued: !!b.issued });
     return Response.json(res.error ? { error: res.error } : { status: "ok", issued: !!b.issued });

@@ -33,6 +33,7 @@ export default function Board({ go }) {
   const [flash, setFlash] = useState(null);
   const [edit, setEdit] = useState(null);   // player being edited
   const [vals, setVals] = useState({});
+  const [checkoffsOpen, setCheckoffsOpen] = useState(false); // the "Check-offs" manager
   const scanRef = useRef(null);
 
   // presentRef = set of player ids that were marked present in the LAST snapshot.
@@ -278,7 +279,11 @@ export default function Board({ go }) {
             switch seasons in the sidebar.
           </div>
         </div>
-        {go && <button className="btn ghost sm" onClick={() => go({ page: "stations" })}>← Stations</button>}
+        <div className="btn-row">
+          <button className="btn sm" onClick={() => setCheckoffsOpen(true)}
+            title="Custom things to tick off at check-in — Got gift, Picture form in…">Check-offs</button>
+          {go && <button className="btn ghost sm" onClick={() => go({ page: "stations" })}>← Stations</button>}
+        </div>
       </div>
       {flash && <div className={"note " + (flash.ok ? "good" : "warn")}>{flash.text}</div>}
       {data.error && <div className="note warn">{data.error} <button className="btn ghost sm" style={{ marginLeft: 8 }} onClick={load}>Retry</button></div>}
@@ -482,12 +487,17 @@ export default function Board({ go }) {
                 to reach them. The header stays put; everything under it scrolls. */}
             <div className="board-side-scroll">
               {result
-                ? <ScanPanel key={result.player.id} data={result} week={week} fields={data.fields || []} onSaved={load} onClear={() => setResult(null)} />
+                ? <ScanPanel key={`${result.player.id}-${week}`} data={result} week={week} fields={data.fields || []} onSaved={load} onClear={() => setResult(null)} />
                 : <div className="muted small board-empty">No one checked in yet. Use the check-in box on the left and their day shows here.</div>}
             </div>
           </div>
         </aside>
       </div>
+
+      {checkoffsOpen && (
+        <CheckoffsManager week={week} weekList={weekList} leagues={data.leagues || []} divisions={divOptions}
+          onClose={() => setCheckoffsOpen(false)} onChanged={load} />
+      )}
 
       {edit && (
         <div className="overlay" onClick={() => setEdit(null)}>
@@ -515,6 +525,8 @@ function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
   const [confirmedAt, setConfirmedAt] = useState(data.sizeConfirmedAt || "");
   const [sizeErr, setSizeErr] = useState("");
   const [present, setPresent] = useState(data.status !== "checked_out");
+  // Custom check-offs that apply to this player this week ("Got gift"…).
+  const [checks, setChecks] = useState(data.checks || []);
   const p = data.player;
   const jerseyText = [...new Set((data.games || []).map((g) => g.jersey).filter(Boolean))].join(" / ").toUpperCase() || String(data.jerseyColor || "").toUpperCase();
   // The sizes the league actually stocks, from the field itself.
@@ -527,9 +539,17 @@ function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
   // Keep the checklist live as the jersey checkbox and the size change — the
   // whole point of editing here is that the red item goes away in front of you.
   const issues = (data.issues || [])
-    .filter((i) => i !== "Jersey not issued" && i !== "No jersey size")
+    .filter((i) => i !== "Jersey not issued" && i !== "No jersey size" && !i.startsWith("Not done: "))
     .concat(size ? [] : ["No jersey size"])
-    .concat(issued ? [] : ["Jersey not issued"]);
+    .concat(issued ? [] : ["Jersey not issued"])
+    .concat(checks.filter((c) => !c.done).map((c) => `Not done: ${c.label}`));
+  // Tick / untick a check-off. Shown right away; the board refreshes after.
+  async function toggleCheck(c, done) {
+    setChecks((cs) => cs.map((x) => (x.id === c.id ? { ...x, done } : x)));
+    const res = await api.checkoffMark(c.id, p.id, week, done);
+    if (res && res.error) setChecks((cs) => cs.map((x) => (x.id === c.id ? { ...x, done: !done } : x)));
+    onSaved && onSaved();
+  }
   async function saveNote() { await api.boardNote({ player_id: p.id, notes }); setSaved(true); onSaved && onSaved(); setTimeout(() => setSaved(false), 1500); }
   async function toggleJersey(v) { setIssued(v); await api.boardSetJersey(p.id, v); onSaved && onSaved(); }
   async function changeSize(v) {
@@ -599,6 +619,21 @@ function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
         </div>
       </div>
 
+      {checks.length > 0 && (
+        <div className="kr-cell" style={{ marginBottom: 12 }}>
+          <div className="kr-label">Check-offs</div>
+          <div className="stack" style={{ gap: 6, marginTop: 6 }}>
+            {checks.map((c) => (
+              <label key={c.id} className="small" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" style={{ width: "auto" }} checked={!!c.done} onChange={(e) => toggleCheck(c, e.target.checked)} />
+                <span>{c.label} {c.done ? "✓" : ""}</span>
+                <span className="muted small" style={{ marginLeft: "auto" }}>{c.repeat === "once" ? "once this season" : c.repeat === "every" ? "every week" : "this week"}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ marginBottom: 12 }}>
         <div className="kr-label" style={{ marginBottom: 4 }}>{data.games && data.games.length > 1 ? `This week's ${data.games.length} games` : "This week's game"}</div>
         {data.games && data.games.length
@@ -616,6 +651,124 @@ function ScanPanel({ data, week, fields = [], onSaved, onClear }) {
         <button className="btn primary" onClick={saveNote}>{saved ? "Saved ✓" : "Save notes"}</button>
         <button className="btn" onClick={togglePresent}>{present ? "Check out" : "Check in"}</button>
         <button className="btn ghost" onClick={onClear}>Clear</button>
+      </div>
+    </div>
+  );
+}
+
+// "Check-offs" manager: the custom things staff tick off at check-in, on top of
+// the built-in jersey ones. Each has a name, WHEN it applies (one week / every
+// week / once per season) and optionally one league or division. They show on
+// Check-in details as checkboxes and in red under "Needs attention" until
+// ticked. Storage + rules: lib/checkoffs.js.
+const REPEAT_LABEL = { week: "Just one week", every: "Every week", once: "Once this season" };
+
+function CheckoffsManager({ week, weekList, leagues, divisions, onClose, onChanged }) {
+  const blank = { label: "", repeat: "week", week, league: "", division: "" };
+  const [items, setItems] = useState(null);
+  const [draft, setDraft] = useState(blank);   // the add form
+  const [editId, setEditId] = useState(null);  // item being edited (uses `edit`)
+  const [edit, setEdit] = useState({});
+  const [err, setErr] = useState("");
+
+  async function load() { const r = await api.checkoffsList(); setItems(r.items || []); }
+  useEffect(() => { load(); }, []);
+  // The board's week can be one that isn't in the season's list (e.g. today's
+  // week before the season starts) — list it too, so the default is shown
+  // truthfully instead of the dropdown silently displaying Week 1.
+  const weekOpts = weekList.some((w) => w.week === week) ? weekList : [{ week, label: `Board's week (${week})` }, ...weekList];
+  const weekLabel = (w) => (weekOpts.find((x) => x.week === w) || {}).label || w;
+  const when = (it) => (it.repeat === "week" ? weekLabel(it.week) : REPEAT_LABEL[it.repeat]);
+  const who = (it) => [it.league, it.division].filter(Boolean).join(" · ") || "Everyone";
+
+  async function add() {
+    setErr("");
+    const res = await api.checkoffAdd(draft);
+    if (res.error) return setErr(res.error);
+    setDraft(blank); await load(); onChanged && onChanged();
+  }
+  async function save() {
+    setErr("");
+    const res = await api.checkoffEdit(editId, edit);
+    if (res.error) return setErr(res.error);
+    setEditId(null); await load(); onChanged && onChanged();
+  }
+  async function toggle(it) { await api.checkoffEdit(it.id, { active: !it.active }); await load(); onChanged && onChanged(); }
+  async function del(it) {
+    if (!window.confirm(`Delete "${it.label}"? Its ticks go with it.`)) return;
+    await api.checkoffDel(it.id); await load(); onChanged && onChanged();
+  }
+
+  // The same fields for add and edit.
+  const Fields = ({ v, set }) => (
+    <div className="row" style={{ flexWrap: "wrap" }}>
+      <div style={{ flex: "2 1 200px" }}><label className="fld">Name</label>
+        <input type="text" value={v.label} placeholder="e.g. Got gift" onChange={(e) => set({ ...v, label: e.target.value })} /></div>
+      <div style={{ flex: "1 1 150px" }}><label className="fld">When</label>
+        <select value={v.repeat} onChange={(e) => set({ ...v, repeat: e.target.value, week: v.week || week })}>
+          {Object.entries(REPEAT_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select></div>
+      {v.repeat === "week" && (
+        <div style={{ flex: "1 1 160px" }}><label className="fld">Week</label>
+          <select value={v.week} onChange={(e) => set({ ...v, week: e.target.value })}>
+            {weekOpts.map((w) => <option key={w.week} value={w.week}>{w.label}</option>)}
+          </select></div>
+      )}
+      <div style={{ flex: "1 1 150px" }}><label className="fld">League</label>
+        <select value={v.league} onChange={(e) => set({ ...v, league: e.target.value })}>
+          <option value="">All leagues</option>
+          {[...new Set([v.league, ...leagues].filter(Boolean))].map((l) => <option key={l} value={l}>{l}</option>)}
+        </select></div>
+      <div style={{ flex: "1 1 150px" }}><label className="fld">Division</label>
+        <select value={v.division} onChange={(e) => set({ ...v, division: e.target.value })}>
+          <option value="">All divisions</option>
+          {[...new Set([v.division, ...divisions].filter(Boolean))].map((d) => <option key={d} value={d}>{d}</option>)}
+        </select></div>
+    </div>
+  );
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760, width: "100%" }}>
+        <h2 style={{ marginBottom: 4 }}>Check-offs</h2>
+        <div className="muted small" style={{ marginBottom: 10 }}>
+          Things to tick off at check-in, like <i>Got gift</i> or <i>Picture form in</i>. Each one shows on a player's
+          Check-in details as a checkbox, and in red under Needs attention until it's ticked.
+        </div>
+        {err && <div className="note warn">{err}</div>}
+
+        {items === null ? <div className="muted">Loading…</div> : (
+          <div className="stack" style={{ gap: 8 }}>
+            {items.map((it) => editId === it.id ? (
+              <div className="card" key={it.id} style={{ background: "var(--line-soft)", marginBottom: 0 }}>
+                {Fields({ v: edit, set: setEdit })}
+                <div className="btn-row" style={{ marginTop: 8 }}>
+                  <button className="btn primary sm" onClick={save}>Save</button>
+                  <button className="btn ghost sm" onClick={() => setEditId(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className={"rule-row" + (it.active ? "" : " off")} key={it.id}>
+                <div className="rule-main">
+                  <div className="nm">{it.label}</div>
+                  <div className="ty">{when(it)} · {who(it)}{it.season ? ` · ${it.season}` : ""}{it.active ? "" : " · turned off"}</div>
+                </div>
+                <button className={"switch" + (it.active ? " on" : "")} aria-label={it.active ? "On" : "Off"} title={it.active ? "On — click to turn off" : "Off — click to turn on"} onClick={() => toggle(it)} />
+                <button className="btn ghost sm" onClick={() => { setEditId(it.id); setEdit({ label: it.label, repeat: it.repeat, week: it.week || week, league: it.league || "", division: it.division || "" }); }}>Edit</button>
+                <button className="btn ghost sm" onClick={() => del(it)}>Delete</button>
+              </div>
+            ))}
+            {!items.length && <div className="muted small">No check-offs yet — add one below.</div>}
+          </div>
+        )}
+
+        <div className="divider" />
+        <h3 style={{ marginTop: 0 }}>Add a check-off</h3>
+        {Fields({ v: draft, set: setDraft })}
+        <div className="btn-row" style={{ marginTop: 10 }}>
+          <button className="btn primary" onClick={add}>Add check-off</button>
+          <button className="btn ghost" onClick={onClose}>Done</button>
+        </div>
       </div>
     </div>
   );
