@@ -109,7 +109,9 @@ export default function Leagues({ refresh, onAsk }) {
   // ---- assignment rules per season ----------------------------------------
   // A rule belongs to one season, or to every season (season ""). The tab shows
   // the rules that apply in the sidebar's season: its own + the shared ones.
-  const seasonRules = snName ? rules.filter((r) => !r.season || r.season === snName) : rules;
+  const seasonRules = snName
+    ? rules.filter((r) => (!r.season || r.season === snName) && !(r.skip_seasons || []).includes(snName))
+    : rules;
   const adoptable = adoptFrom ? rules.filter((r) => r.season === adoptFrom) : [];
   function pickAdoptFrom(sn) {
     setAdoptFrom(sn);
@@ -126,6 +128,25 @@ export default function Leagues({ refresh, onAsk }) {
     const res = await api.ruleSetSeason(r.id, season);
     if (res.error) return setFlash({ ok: false, text: res.error });
     setFlash({ ok: true, text: season ? `"${r.name}" now only applies to ${season}.` : `"${r.name}" now applies to every season.` });
+    await load();
+  }
+
+  // Delete only touches the season picked in the sidebar: a season's own rule is
+  // deleted; an "All seasons" rule is just switched off for this season. With
+  // no season picked (every season showing), Delete removes it everywhere.
+  async function deleteRuleHere(r) {
+    if (snName) {
+      const msg = r.season
+        ? `Delete the rule "${r.name}" from ${snName}?`
+        : `Remove "${r.name}" from ${snName} only?\n\nIt's an "All seasons" rule — every other season keeps using it.`;
+      if (!window.confirm(msg)) return;
+      const res = await api.ruleRemove(r.id, snName);
+      if (res.error) return setFlash({ ok: false, text: res.error });
+      setFlash({ ok: true, text: r.season ? `Deleted "${r.name}" from ${snName}.` : `Removed "${r.name}" from ${snName}. Other seasons still use it.` });
+    } else {
+      if (!window.confirm(`Delete the rule "${r.name}"${r.season ? ` (${r.season})` : " from every season"}?`)) return;
+      await api.deleteAssignment(r.id);
+    }
     await load();
   }
 
@@ -277,11 +298,11 @@ export default function Leagues({ refresh, onAsk }) {
         <div className="stack">
           {seasonRules.map((r) => (
             <AssignmentRuleRow key={r.id} rule={r} fieldNames={fieldNames} leagues={leagues} setFlash={setFlash}
-              seasonChip={<span className={"chip" + (r.season ? " brand" : "")} style={{ marginLeft: 6 }}>{r.season || "All seasons"}</span>}
+              seasonChip={<span className={"chip" + (r.season ? " brand" : "")} style={{ marginLeft: 6 }}>{r.season || "All seasons"}{!snName && !r.season && r.skip_seasons && r.skip_seasons.length ? ` · not in ${r.skip_seasons.join(", ")}` : ""}</span>}
               extra={snName ? (r.season
                 ? <button className="btn ghost sm" title="Use this rule in every season" onClick={() => ruleSeason(r, "")}>Share</button>
                 : <button className="btn ghost sm" title={`Stop using this rule in other seasons`} onClick={() => ruleSeason(r, snName)}>{snName} only</button>) : null}
-              onDelete={async () => { if (!window.confirm(`Delete the rule "${r.name}"${r.season ? "" : " from every season"}?`)) return; await api.deleteAssignment(r.id); await load(); }}
+              onDelete={() => deleteRuleHere(r)}
               onSaved={load} />
           ))}
           {!seasonRules.length && <div className="muted small">No assignment rules{snName ? ` for ${snName}` : ""} yet.</div>}
