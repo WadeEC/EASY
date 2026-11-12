@@ -144,6 +144,38 @@ export async function POST(req) {
   if (b.action === "checkoff_edit") return Response.json(updateItem(b.id, b));
   if (b.action === "checkoff_del") return Response.json(deleteItem(b.id));
   if (b.action === "checkoff_mark") return Response.json(setMark(b.item_id, b.player_id, b.week, !!b.done));
+  // Who still needs each check-off — for the Download button. One list per
+  // item (or just `item_id`), each with the players it applies to who haven't
+  // been ticked yet. A one-week item is reported for its own week; an every-
+  // week item for the board's week; a once-a-season item across the season.
+  if (b.action === "checkoff_report") {
+    const all = listItems({ season: season || null });
+    const items = b.item_id ? all.filter((it) => it.id === Number(b.item_id)).map((it) => ({ ...it, active: 1 }))
+                            : all.filter((it) => it.active);
+    const players = getRecords("player").map((r) => ({ r, d: parse(r.data) })).filter(({ d }) => inSeason(d, season));
+    const out = items.map((it) => {
+      const wk = it.repeat === "week" ? it.week : b.week;
+      const checked = getCheckins(wk);
+      const marks = marksForWeek(wk);
+      let applies = 0;
+      const rows = [];
+      for (const { r, d } of players) {
+        const mine = checksFor({ id: r.id, ...d }, wk, [it], marks);
+        if (!mine.length) continue;
+        applies++;
+        if (mine[0].done) continue;
+        rows.push({
+          name: r.name || d.full_name || `#${r.id}`,
+          league: d.league || "", division: divisionOf(d), team: d.team || "",
+          parent_phone: d.parent_phone || "", email: d.email || "",
+          checked_in: checked.has(r.id),
+        });
+      }
+      rows.sort((x, y) => x.league.localeCompare(y.league) || String(x.team).localeCompare(String(y.team)) || x.name.localeCompare(y.name));
+      return { id: it.id, label: it.label, repeat: it.repeat, week: it.repeat === "once" ? "" : wk, applies, done: applies - rows.length, rows };
+    });
+    return Response.json({ items: out });
+  }
 
   if (b.action === "set_jersey") {
     const res = updateRecord(Number(b.player_id), { jersey_issued: !!b.issued });

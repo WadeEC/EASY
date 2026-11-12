@@ -699,6 +699,41 @@ function CheckoffsManager({ week, weekList, leagues, divisions, onClose, onChang
     await api.checkoffDel(it.id); await load(); onChanged && onChanged();
   }
 
+  // Download who still needs a check-off (one item, or every turned-on one)
+  // as an Excel file: a Summary sheet, then one sheet per check-off listing
+  // the players not ticked yet, with league, team and parent contact.
+  const [dl, setDl] = useState(null); // id being downloaded, or "all"
+  async function download(it) {
+    setErr(""); setDl(it ? it.id : "all");
+    try {
+      const res = await api.checkoffReport(week, it ? it.id : null);
+      if (res.error) return setErr(res.error);
+      const list = res.items || [];
+      if (!list.length) return setErr("There are no turned-on check-offs to download.");
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+      const whenOf = (x) => (x.repeat === "once" ? "Once this season" : `${x.repeat === "every" ? "Every week" : "Just one week"} — ${weekLabel(x.week)}`);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(list.map((x) => ({
+        "Check-off": x.label, When: whenOf(x), "Applies to": x.applies, Done: x.done, "Still needed": x.rows.length,
+      }))), "Summary");
+      const used = new Set(["Summary"]);
+      for (const x of list) {
+        let nm = String(x.label).replace(/[\[\]:*?\/\\]/g, " ").trim().slice(0, 28) || "Check-off";
+        let n = 2; const base = nm; while (used.has(nm)) nm = `${base.slice(0, 26)} ${n++}`;
+        used.add(nm);
+        const rows = x.rows.map((r) => ({
+          Player: r.name, League: r.league, Division: r.division, Team: r.team,
+          "Parent Phone": r.parent_phone, "Parent Email": r.email, "Checked in": r.checked_in ? "Yes" : "No",
+        }));
+        const ws = rows.length ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet([["Everyone has this one — nothing still needed."]]);
+        ws["!cols"] = [{ wch: 26 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 28 }, { wch: 11 }];
+        XLSX.utils.book_append_sheet(wb, ws, nm);
+      }
+      const slugify = (t) => String(t).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      XLSX.writeFile(wb, it ? `${slugify(it.label) || "check-off"}-still-needed.xlsx` : `check-offs-still-needed-${week}.xlsx`);
+    } finally { setDl(null); }
+  }
+
   // The same fields for add and edit.
   const Fields = ({ v, set }) => (
     <div className="row" style={{ flexWrap: "wrap" }}>
@@ -736,6 +771,14 @@ function CheckoffsManager({ week, weekList, leagues, divisions, onClose, onChang
           Check-in details as a checkbox, and in red under Needs attention until it's ticked.
         </div>
         {err && <div className="note warn">{err}</div>}
+        {items && items.some((it) => it.active) && (
+          <div className="btn-row" style={{ marginBottom: 10 }}>
+            <button className="btn sm" disabled={dl === "all"} onClick={() => download(null)}>
+              {dl === "all" ? "Preparing…" : "Download who still needs check-offs (Excel)"}
+            </button>
+            <span className="muted small" style={{ alignSelf: "center" }}>Every turned-on check-off, one sheet each.</span>
+          </div>
+        )}
 
         {items === null ? <div className="muted">Loading…</div> : (
           <div className="stack" style={{ gap: 8 }}>
@@ -754,6 +797,7 @@ function CheckoffsManager({ week, weekList, leagues, divisions, onClose, onChang
                   <div className="ty">{when(it)} · {who(it)}{it.season ? ` · ${it.season}` : ""}{it.active ? "" : " · turned off"}</div>
                 </div>
                 <button className={"switch" + (it.active ? " on" : "")} aria-label={it.active ? "On" : "Off"} title={it.active ? "On — click to turn off" : "Off — click to turn on"} onClick={() => toggle(it)} />
+                <button className="btn ghost sm" disabled={dl === it.id} title="Download who still needs this one (Excel)" onClick={() => download(it)}>{dl === it.id ? "…" : "Download"}</button>
                 <button className="btn ghost sm" onClick={() => { setEditId(it.id); setEdit({ label: it.label, repeat: it.repeat, week: it.week || week, league: it.league || "", division: it.division || "" }); }}>Edit</button>
                 <button className="btn ghost sm" onClick={() => del(it)}>Delete</button>
               </div>
