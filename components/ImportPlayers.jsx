@@ -64,7 +64,7 @@ export default function ImportPlayers({ onDone, go }) {
       // District detection — same as Players page. Auto-commits to the township
       // picker on confident hits; league still flows through Assignment rules.
       try {
-        const det = await api.importDetect({ rows: r.slice(0, 500), filename: file.name });
+        const det = await api.importDetect({ rows: r.slice(0, 500), filename: file.name, season: season || null });
         setDetection(det);
         if (det && det.district && det.confidence >= 0.7) setSource(det.district);
       } catch {}
@@ -73,6 +73,7 @@ export default function ImportPlayers({ onDone, go }) {
       if (mappedCount(m) < 2) {
         try {
           const ai = await api.importAskAi({
+            season: season || null,
             rows: r.slice(0, 8),
             filename: file.name,
             columns: cols,

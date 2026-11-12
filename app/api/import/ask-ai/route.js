@@ -1,3 +1,5 @@
+import { setScope, setScopeFromReq, seasonForWrite } from "@/lib/season-scope.js";
+import { seasonLeagueList } from "@/lib/tools.js";
 import { bindRequest } from "@/lib/actor.js";
 import { chat } from "@/lib/llm.js";
 
@@ -26,6 +28,22 @@ function extractJsonBlock(text) {
 // POST { rows, filename, columns, knownDistricts, fields }
 //   fields: [{ name, label, type }]   target schema we're mapping into
 // Returns: { district, league, reason, newDistrictSuggestion, headerMap }
+// Only suggest leagues that belong to the season being uploaded into. The
+// township → league list in markers.json doesn't know about seasons, so
+// "Limerick" would otherwise suggest Saturday Limerick in the Winter season.
+function seasonLeagueFilter(req, bodySeason) {
+  try {
+    if (bodySeason) setScope(bodySeason); else setScopeFromReq(req);
+    const allowed = seasonLeagueList(seasonForWrite());
+    return allowed;
+  } catch { return null; }
+}
+function keepSeasonLeagues(list, allowed) {
+  if (!allowed) return list;
+  const lc = new Map(allowed.map((l) => [String(l).toLowerCase(), l]));
+  return (list || []).map((l) => lc.get(String(l).toLowerCase())).filter(Boolean);
+}
+
 export async function POST(req) {
   bindRequest(req);
   let body = {};
@@ -101,9 +119,10 @@ Rules for headerMap:
 
   const content = resp?.message?.content || "";
   const parsed = extractJsonBlock(content) || {};
+  const allowedLeagues = seasonLeagueFilter(req, body.season);
   return Response.json({
     district: parsed.district || null,
-    league: parsed.league || null,
+    league: (parsed.league && allowedLeagues ? keepSeasonLeagues([parsed.league], allowedLeagues)[0] : parsed.league) || null,
     reason: parsed.reason || "",
     newDistrictSuggestion: parsed.newDistrictSuggestion || null,
     headerMap: (parsed.headerMap && typeof parsed.headerMap === "object") ? parsed.headerMap : {},
