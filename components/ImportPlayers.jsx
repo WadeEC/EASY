@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import * as XLSX from "xlsx";
 import { api } from "@/lib/api.js";
+import ImportExtraColumns from "@/components/ImportExtraColumns.jsx";
 import { guessHeader, prepareImport, mappedCount, normHeader, PREDICTED_FIELDS } from "@/lib/import-helpers.js";
 
 // Reusable "import a roster" tool for the Players section. Used on Home (and anywhere).
@@ -163,6 +164,8 @@ export default function ImportPlayers({ onDone, go }) {
               </div>
             ))}
           </div>
+          <ImportExtraColumns type="player" fields={fields} rows={rows} columns={columns} mapping={mapping} setMapping={setMapping}
+            onFieldAdded={(f) => setFields((prev) => (prev.some((x) => x.name === f.name) ? prev : [...prev, f]))} setFlash={setFlash} />
           <label className="small" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14 }}>
             <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={refresh} onChange={(e) => setRefresh(e.target.checked)} />
             <span>

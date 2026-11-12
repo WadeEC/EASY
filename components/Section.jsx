@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { api } from "@/lib/api.js";
+import ImportExtraColumns from "@/components/ImportExtraColumns.jsx";
 import { plural, recordName } from "@/lib/ui.js";
 import { HEADER_ALIASES, normHeader, guessHeader, prepareImport, mappedCount, PREDICTED_FIELDS } from "@/lib/import-helpers.js";
 import FieldInput from "./FieldInput.jsx";
@@ -876,7 +877,11 @@ function AddTab({ type, fields, L, reload, refresh, setFlash, playerNames }) {
   );
 }
 
-function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
+function ImportTab({ type, fields: baseFields, L, reload, refresh, setFlash }) {
+  // Fields made from a file column during this upload show in the grid right
+  // away, before the page's own field list reloads.
+  const [addedFields, setAddedFields] = useState([]);
+  const fields = [...baseFields, ...addedFields.filter((a) => !baseFields.some((f) => f.name === a.name))];
   const [rows, setRows] = useState([]);
   const [columns, setColumns] = useState([]);
   const [mapping, setMapping] = useState({});
@@ -1211,6 +1216,8 @@ function ImportTab({ type, fields, L, reload, refresh, setFlash }) {
               </div>
             ))}
           </div>
+          <ImportExtraColumns type={type} fields={fields} rows={rows} columns={columns} mapping={mapping} setMapping={setMapping}
+            onFieldAdded={(f) => { setAddedFields((prev) => [...prev, f]); reload && reload(); }} setFlash={setFlash} />
           <label className="small" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14 }}>
             <input type="checkbox" style={{ width: "auto", marginTop: 3 }} checked={refresh_} onChange={(e) => setRefresh_(e.target.checked)} />
             <span>
