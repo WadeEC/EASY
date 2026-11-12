@@ -1,6 +1,6 @@
 import { getFields, getRecords, getRecordsForSeason, getRecordsAll, applyCreateRecord, validateRecord, identityKey, findAmbiguousMatches, slug, writeMasterRow, coerceSelectValue, isKnownDivision } from "@/lib/tools.js";
 import { setScope, assertWritable } from "@/lib/season-scope.js";
-import { updateRecord, assignDivision } from "@/lib/tools.js";
+import { updateRecord, assignDivision, seasonLeagueList, resolveChoice } from "@/lib/tools.js";
 import { getRow } from "@/lib/db.js";
 import { bindRequest } from "@/lib/actor.js";
 import { coerceDate, isDateColumn } from "@/lib/import-helpers.js";
@@ -163,6 +163,16 @@ export async function POST(req) {
       const before = row0 ? parse(row0.data) : null;
       if (!before) return { error: `no record #${pid}` };
       const patch = changedFields(before, data);
+      // A re-upload can't move someone into a league outside their season.
+      if (rtype === "player" && hasVal(patch.league)) {
+        const allowed = seasonLeagueList(row0.season || season);
+        if (allowed) {
+          const r = resolveChoice(patch.league, allowed);
+          if (r.error) delete patch.league;
+          else if (r.value === before.league) delete patch.league;
+          else patch.league = r.value;
+        }
+      }
       if (hasVal(patch.age)) {
         const dv = assignDivision({ ...before, ...patch });
         if (dv && dv !== (before.division || "")) patch.division = dv;
@@ -244,6 +254,9 @@ export async function POST(req) {
     const res = applyCreateRecord(rtype, displayName, data, "user(import)");
     if (res && res.error) { skipped.push(`Row ${n + 1} (${displayName}): ${res.error}`); return; }
     added++;
+    if (res && res.league_dropped) {
+      unmatched.push({ rowIndex: n + 1, name: displayName, field: "League", value: res.league_dropped, why: "not a league in this season — left in Unassigned" });
+    }
     if (incomingDivision && !divisionOk(incomingDivision)) {
       unmatched.push({ rowIndex: n + 1, name: displayName, field: "Division", value: incomingDivision, why: "not a division in this season — sorted by age bracket instead" });
     }
